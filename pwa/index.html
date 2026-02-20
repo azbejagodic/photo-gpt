@@ -1,12 +1,264 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Photo GPT Bridge</title>
-  </head>
-  <body>
-    <h1>Photo GPT Bridge</h1>
-    <p>Server is running. Upload photos using <code>POST /api/upload</code>.</p>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Photo Upload</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f7f9;
+      --surface: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --primary: #2563eb;
+      --primary-pressed: #1d4ed8;
+      --success: #15803d;
+      --error: #b91c1c;
+      --border: #e5e7eb;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    .app {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.4rem;
+    }
+
+    p.helper {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.35;
+    }
+
+    .actions {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .btn,
+    .file-label {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 52px;
+      border-radius: 12px;
+      border: none;
+      padding: 12px 16px;
+      font-size: 1rem;
+      font-weight: 600;
+      text-align: center;
+      text-decoration: none;
+      cursor: pointer;
+      width: 100%;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .file-label {
+      background: #111827;
+      color: white;
+    }
+
+    .btn {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn:active,
+    .file-label:active {
+      transform: scale(0.99);
+    }
+
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .btn:not(:disabled):active {
+      background: var(--primary-pressed);
+    }
+
+    #status {
+      min-height: 1.5em;
+      margin: 0 0 14px;
+      font-size: 0.95rem;
+      color: var(--muted);
+    }
+
+    #status.success {
+      color: var(--success);
+    }
+
+    #status.error {
+      color: var(--error);
+    }
+
+    .preview-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .preview-item {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #f3f4f6;
+    }
+
+    @media (min-width: 500px) {
+      .preview-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="card">
+      <h1>Upload photos</h1>
+      <p class="helper">Pick one or more photos, review previews, then upload.</p>
+
+      <div class="actions">
+        <label class="file-label" for="photoInput">Choose photos</label>
+        <!--
+          File input notes:
+          - accept="image/*" asks mobile browsers to show image files only.
+          - multiple lets users select more than one image at once.
+          - capture is a hint for supported browsers to open the camera directly.
+            Some browsers ignore this when multiple is present, so users may still see
+            a chooser (camera or photo library), which is normal.
+        -->
+        <input id="photoInput" type="file" accept="image/*" multiple capture="environment" hidden />
+
+        <button id="uploadBtn" class="btn" type="button" disabled>Upload</button>
+      </div>
+
+      <p id="status" aria-live="polite"></p>
+      <div id="previewGrid" class="preview-grid"></div>
+    </section>
+  </main>
+
+  <script>
+    const photoInput = document.getElementById('photoInput');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const previewGrid = document.getElementById('previewGrid');
+    const statusEl = document.getElementById('status');
+
+    let selectedFiles = [];
+    let previewUrls = [];
+
+    function setStatus(message, kind = '') {
+      statusEl.textContent = message;
+      statusEl.className = kind ? kind : '';
+    }
+
+    function clearPreviews() {
+      previewUrls.forEach((url) => URL.revokeObjectURL(url));
+      previewUrls = [];
+      previewGrid.innerHTML = '';
+    }
+
+    function renderPreviews(files) {
+      clearPreviews();
+
+      files.forEach((file) => {
+        const img = document.createElement('img');
+        const objectUrl = URL.createObjectURL(file);
+
+        previewUrls.push(objectUrl);
+        img.src = objectUrl;
+        img.alt = file.name;
+        img.className = 'preview-item';
+        previewGrid.appendChild(img);
+      });
+    }
+
+    photoInput.addEventListener('change', () => {
+      selectedFiles = Array.from(photoInput.files || []);
+      renderPreviews(selectedFiles);
+
+      uploadBtn.disabled = selectedFiles.length === 0;
+
+      if (selectedFiles.length > 0) {
+        setStatus(`Ready to upload ${selectedFiles.length} photo${selectedFiles.length > 1 ? 's' : ''}.`);
+      } else {
+        setStatus('');
+      }
+    });
+
+    uploadBtn.addEventListener('click', async () => {
+      if (selectedFiles.length === 0) {
+        setStatus('Please choose at least one photo first.', 'error');
+        return;
+      }
+
+      uploadBtn.disabled = true;
+      setStatus('Uploading...');
+
+      try {
+        // FormData notes:
+        // - FormData creates a multipart/form-data request body.
+        // - Appending each file under the same key "photos" matches server middleware
+        //   patterns like upload.array("photos").
+        // - fetch will automatically set the right Content-Type boundary for FormData.
+        const formData = new FormData();
+        selectedFiles.forEach((file) => {
+          formData.append('photos', file, file.name);
+        });
+
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Upload failed with status ${response.status}`);
+        }
+
+        const uploadedCount = selectedFiles.length;
+
+        // Clear UI state after success so users can select the same files again.
+        clearPreviews();
+        selectedFiles = [];
+        photoInput.value = '';
+        uploadBtn.disabled = true;
+
+        setStatus(`Uploaded ${uploadedCount} photo${uploadedCount > 1 ? 's' : ''}.`, 'success');
+      } catch (error) {
+        setStatus(error.message || 'Upload error. Please try again.', 'error');
+        uploadBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
 </html>

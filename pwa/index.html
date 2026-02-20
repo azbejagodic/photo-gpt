@@ -1,12 +1,400 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Photo GPT Bridge</title>
-  </head>
-  <body>
-    <h1>Photo GPT Bridge</h1>
-    <p>Server is running. Upload photos using <code>POST /api/upload</code>.</p>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Photo Upload Tray</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --primary: #2563eb;
+      --primary-pressed: #1d4ed8;
+      --dark: #111827;
+      --success: #15803d;
+      --error: #b91c1c;
+      --border: #e5e7eb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .app {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+    }
+
+    h1, h2 {
+      margin: 0 0 8px;
+      line-height: 1.2;
+    }
+
+    h1 { font-size: 1.35rem; }
+    h2 { font-size: 1.05rem; }
+
+    .helper {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 0.93rem;
+    }
+
+    .actions {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .btn,
+    .input-btn {
+      width: 100%;
+      min-height: 54px;
+      border-radius: 12px;
+      border: none;
+      padding: 12px;
+      font-size: 1rem;
+      font-weight: 700;
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .input-btn { background: var(--dark); color: #fff; }
+    .btn { background: var(--primary); color: #fff; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn:not(:disabled):active { background: var(--primary-pressed); }
+    .input-btn:active, .btn:active { transform: scale(0.99); }
+
+    #status {
+      min-height: 1.4em;
+      margin: 0;
+      font-size: 0.95rem;
+      color: var(--muted);
+    }
+
+    #status.success { color: var(--success); }
+    #status.error { color: var(--error); }
+
+    .tray-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .count {
+      color: var(--muted);
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .tile {
+      position: relative;
+      aspect-ratio: 1 / 1;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: #eef2f7;
+    }
+
+    .tile img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .remove {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 30px;
+      height: 30px;
+      border: none;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .empty {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin: 4px 0 0;
+    }
+
+    @media (min-width: 500px) {
+      .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="card">
+      <h1>Photo uploader</h1>
+      <p class="helper">Take photos one-by-one or choose many from gallery. They stay in your selected tray until you upload.</p>
+
+      <div class="actions">
+        <label class="input-btn" for="cameraInput">Take photo</label>
+        <!--
+          Camera input:
+          - accept="image/*" limits file picker to images.
+          - capture="environment" hints rear camera on supported mobile browsers.
+          - No `multiple` here: this is intended for one-photo-at-a-time capture.
+        -->
+        <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden />
+
+        <label class="input-btn" for="galleryInput">Choose from gallery</label>
+        <!--
+          Gallery input:
+          - accept="image/*" shows image files.
+          - multiple allows selecting several photos in one pick.
+        -->
+        <input id="galleryInput" type="file" accept="image/*" multiple hidden />
+
+        <button id="uploadBtn" class="btn" type="button" disabled>Upload selected photos</button>
+      </div>
+
+      <p id="status" aria-live="polite"></p>
+    </section>
+
+    <section class="card">
+      <div class="tray-head">
+        <h2>Selected tray</h2>
+        <span id="selectedCount" class="count">Selected: 0 / 20</span>
+      </div>
+      <div id="selectedGrid" class="grid"></div>
+      <p id="selectedEmpty" class="empty">No photos selected yet.</p>
+    </section>
+
+    <section class="card">
+      <div class="tray-head">
+        <h2>Uploaded</h2>
+      </div>
+      <div id="uploadedGrid" class="grid"></div>
+      <p id="uploadedEmpty" class="empty">No uploaded photos found yet.</p>
+    </section>
+  </main>
+
+  <script>
+    const MAX_FILES = 20;
+
+    const cameraInput = document.getElementById('cameraInput');
+    const galleryInput = document.getElementById('galleryInput');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const statusEl = document.getElementById('status');
+
+    const selectedGrid = document.getElementById('selectedGrid');
+    const selectedEmpty = document.getElementById('selectedEmpty');
+    const selectedCount = document.getElementById('selectedCount');
+
+    const uploadedGrid = document.getElementById('uploadedGrid');
+    const uploadedEmpty = document.getElementById('uploadedEmpty');
+
+    // We keep selected files in memory because browser file inputs are transient:
+    // once the picker closes, the input's FileList is read-only and tied to that input event.
+    // You cannot safely "preserve and append" old selections inside the input itself, and
+    // browsers may clear/restrict values for security/privacy reasons. So we copy Files into
+    // our own array and treat it as the source of truth for the selected tray.
+    let selectedFiles = [];
+
+    function setStatus(message, kind = '') {
+      statusEl.textContent = message;
+      statusEl.className = kind ? kind : '';
+    }
+
+    function updateSelectedCount() {
+      selectedCount.textContent = `Selected: ${selectedFiles.length} / ${MAX_FILES}`;
+      uploadBtn.disabled = selectedFiles.length === 0;
+    }
+
+    function renderSelectedTray() {
+      selectedGrid.innerHTML = '';
+
+      selectedFiles.forEach((file, index) => {
+        const tile = document.createElement('div');
+        tile.className = 'tile';
+
+        const img = document.createElement('img');
+        const objectUrl = URL.createObjectURL(file);
+        img.src = objectUrl;
+        img.alt = file.name || `selected-${index + 1}`;
+        img.onload = () => URL.revokeObjectURL(objectUrl);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'remove';
+        removeBtn.setAttribute('aria-label', `Remove photo ${index + 1}`);
+        removeBtn.textContent = '×';
+        removeBtn.addEventListener('click', () => {
+          selectedFiles.splice(index, 1);
+          renderSelectedTray();
+          updateSelectedCount();
+          if (selectedFiles.length === 0) {
+            setStatus('Selected tray is empty.');
+          }
+        });
+
+        tile.appendChild(img);
+        tile.appendChild(removeBtn);
+        selectedGrid.appendChild(tile);
+      });
+
+      selectedEmpty.hidden = selectedFiles.length > 0;
+    }
+
+    function appendFiles(incomingFiles) {
+      const files = Array.from(incomingFiles || []);
+      if (files.length === 0) return;
+
+      if (selectedFiles.length >= MAX_FILES) {
+        setStatus(`Limit reached (${MAX_FILES}). Remove a photo before adding more.`, 'error');
+        return;
+      }
+
+      const availableSlots = MAX_FILES - selectedFiles.length;
+      const acceptedFiles = files.slice(0, availableSlots);
+      selectedFiles.push(...acceptedFiles);
+
+      if (acceptedFiles.length < files.length) {
+        setStatus(`Added ${acceptedFiles.length}. Tray limit is ${MAX_FILES}, extra photos were skipped.`, 'error');
+      } else {
+        setStatus(`Added ${acceptedFiles.length} photo${acceptedFiles.length > 1 ? 's' : ''} to tray.`);
+      }
+
+      renderSelectedTray();
+      updateSelectedCount();
+    }
+
+    cameraInput.addEventListener('change', () => {
+      appendFiles(cameraInput.files);
+      // Reset so taking another photo triggers change again, even with same filename.
+      cameraInput.value = '';
+    });
+
+    galleryInput.addEventListener('change', () => {
+      appendFiles(galleryInput.files);
+      // Reset so user can pick the same files again if needed.
+      galleryInput.value = '';
+    });
+
+    async function loadUploadedGrid() {
+      uploadedGrid.innerHTML = '';
+      uploadedEmpty.hidden = true;
+
+      try {
+        const response = await fetch('/api/latest', { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Latest fetch failed (${response.status})`);
+
+        const data = await response.json();
+
+        // Accept either [{url: "..."}] or ["..."] or {photos:[...]} shapes.
+        const list = Array.isArray(data)
+          ? data
+          : (Array.isArray(data.photos) ? data.photos : []);
+
+        const urls = list
+          .map((item) => (typeof item === 'string' ? item : item && item.url))
+          .filter(Boolean);
+
+        if (urls.length === 0) {
+          uploadedEmpty.hidden = false;
+          return;
+        }
+
+        urls.forEach((url, i) => {
+          const tile = document.createElement('div');
+          tile.className = 'tile';
+
+          const img = document.createElement('img');
+          img.src = url;
+          img.alt = `uploaded-${i + 1}`;
+
+          tile.appendChild(img);
+          uploadedGrid.appendChild(tile);
+        });
+      } catch (error) {
+        uploadedEmpty.hidden = false;
+        uploadedEmpty.textContent = `Could not load uploaded photos: ${error.message}`;
+      }
+    }
+
+    uploadBtn.addEventListener('click', async () => {
+      if (selectedFiles.length === 0) {
+        setStatus('Add at least one photo before upload.', 'error');
+        return;
+      }
+
+      uploadBtn.disabled = true;
+      setStatus('Uploading...');
+
+      try {
+        // FormData builds multipart/form-data for file uploads.
+        // We append every selected File under the same field name "photos"
+        // so the server receives this as one batch (e.g. upload.array("photos")).
+        const formData = new FormData();
+        selectedFiles.forEach((file) => {
+          formData.append('photos', file, file.name);
+        });
+
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Upload failed (${response.status})`);
+        }
+
+        const uploadedCount = selectedFiles.length;
+        selectedFiles = [];
+        renderSelectedTray();
+        updateSelectedCount();
+        setStatus(`Uploaded ${uploadedCount} photo${uploadedCount > 1 ? 's' : ''}.`, 'success');
+
+        await loadUploadedGrid();
+      } catch (error) {
+        setStatus(error.message || 'Upload failed. Please try again.', 'error');
+        uploadBtn.disabled = selectedFiles.length === 0;
+      }
+    });
+
+    updateSelectedCount();
+    renderSelectedTray();
+    loadUploadedGrid();
+  </script>
+</body>
 </html>

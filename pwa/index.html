@@ -200,13 +200,6 @@
       <p id="selectedEmpty" class="empty">No photos selected yet.</p>
     </section>
 
-    <section class="card">
-      <div class="tray-head">
-        <h2>Uploaded</h2>
-      </div>
-      <div id="uploadedGrid" class="grid"></div>
-      <p id="uploadedEmpty" class="empty">No uploaded photos found yet.</p>
-    </section>
   </main>
 
   <script>
@@ -220,9 +213,6 @@
     const selectedGrid = document.getElementById('selectedGrid');
     const selectedEmpty = document.getElementById('selectedEmpty');
     const selectedCount = document.getElementById('selectedCount');
-
-    const uploadedGrid = document.getElementById('uploadedGrid');
-    const uploadedEmpty = document.getElementById('uploadedEmpty');
 
     // Why we store files in an in-memory array:
     // File inputs only expose a transient, read-only FileList after each picker interaction.
@@ -309,43 +299,6 @@
       galleryInput.value = '';
     });
 
-    async function loadUploadedGrid() {
-      uploadedGrid.innerHTML = '';
-      uploadedEmpty.hidden = true;
-
-      try {
-        const response = await fetch('/api/latest', { cache: 'no-store' });
-        if (!response.ok) throw new Error(`Latest fetch failed (${response.status})`);
-
-        const data = await response.json();
-        const list = Array.isArray(data) ? data : (Array.isArray(data.photos) ? data.photos : []);
-
-        const urls = list
-          .map((item) => (typeof item === 'string' ? item : item && item.url))
-          .filter(Boolean);
-
-        if (urls.length === 0) {
-          uploadedEmpty.hidden = false;
-          return;
-        }
-
-        urls.forEach((url, i) => {
-          const tile = document.createElement('div');
-          tile.className = 'tile';
-
-          const img = document.createElement('img');
-          img.src = url;
-          img.alt = `uploaded-${i + 1}`;
-
-          tile.appendChild(img);
-          uploadedGrid.appendChild(tile);
-        });
-      } catch (error) {
-        uploadedEmpty.hidden = false;
-        uploadedEmpty.textContent = `Could not load uploaded photos: ${error.message}`;
-      }
-    }
-
     uploadBtn.addEventListener('click', async () => {
       if (selectedFiles.length === 0) {
         setStatus('Add at least one photo before upload.', 'error');
@@ -374,7 +327,6 @@
         updateSelectedCount();
         setStatus(`Uploaded ${uploadedCount} photo${uploadedCount > 1 ? 's' : ''}.`, 'success');
 
-        await loadUploadedGrid();
       } catch (error) {
         setStatus(error.message || 'Upload failed. Please try again.', 'error');
         uploadBtn.disabled = selectedFiles.length === 0;
@@ -383,7 +335,6 @@
 
     updateSelectedCount();
     renderSelectedTray();
-    loadUploadedGrid();
   </script>
 </body>
 </html>

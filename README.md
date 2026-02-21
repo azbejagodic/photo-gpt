@@ -47,11 +47,15 @@ Each new upload replaces the previous batch.
 
 ## 1. Install dependencies
 
+```text
 npm install
+```
 
 ## 2. Start the server
 
+```text
 npm start
+```
 
 Server runs on:
 
@@ -164,7 +168,7 @@ chrome://extensions
 
 1. Enter your server address:
 
-http://<your-lan-ip>:8787
+`http://<your-lan-ip>:8787`
 
 2. Click Save  
 3. Extension auto-refreshes  

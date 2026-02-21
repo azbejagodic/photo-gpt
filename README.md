@@ -189,14 +189,18 @@ Serves uploaded image
 
 # Directory Structure
 
+## Directory Structure
+
+```text
 photo-gpt/
-├─ data/
-│  └─ latest/          # active upload batch
-├─ pwa/                # mobile web app
-├─ extension/           # browser extension (MV3)
-├─ server.js
-├─ package.json
-└─ README.md
+├── data/
+│   └── latest/        # active upload batch
+├── pwa/               # mobile web app
+├── extension/         # browser extension (MV3)
+├── server.js
+├── package.json
+└── README.md
+```
 
 ---
 
@@ -227,39 +231,6 @@ Extension:
 - No external API calls
 - Files auto-replaced on each upload
 - No persistent multi-user storage
-
----
-
-# Versioning
-
-Semantic Versioning:
-
-v1.0.0 → Initial stable release  
-Major → Breaking change  
-Minor → Feature addition  
-Patch → Bug fix  
-
----
-
-# Development Notes
-
-After changing extension code:
-
-Open:
-
-brave://extensions
-
-Click Reload.
-
-After changing server code:
-
-Stop server:
-
-Ctrl + C
-
-Start again:
-
-npm start
 
 ---
 

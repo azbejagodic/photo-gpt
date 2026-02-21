@@ -92,6 +92,49 @@ function buildImageUrl(origin, file) {
   return `${origin}/files/${encodeURIComponent(file.name)}`;
 }
 
+async function convertImageBlobToPng(blob) {
+  console.log('[popup] convert start', { sourceType: blob.type, sourceSize: blob.size });
+
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(blob);
+  } catch (error) {
+    console.error('[popup] createImageBitmap failed', error);
+    throw new Error('Copy blocked. Use Open then Ctrl+C.');
+  }
+
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('2D canvas context unavailable.');
+    }
+
+    ctx.drawImage(bitmap, 0, 0);
+
+    const pngBlob = await new Promise((resolve, reject) => {
+      canvas.toBlob((result) => {
+        if (result) {
+          resolve(result);
+          return;
+        }
+        reject(new Error('Canvas PNG conversion returned null blob.'));
+      }, 'image/png');
+    });
+
+    console.log('[popup] convert end', { outputType: pngBlob.type, outputSize: pngBlob.size });
+    return pngBlob;
+  } catch (error) {
+    console.error('[popup] PNG conversion failed', error);
+    throw new Error('Copy blocked. Use Open then Ctrl+C.');
+  } finally {
+    bitmap.close();
+  }
+}
+
 async function copyImageFromPopup(imageUrl) {
   console.log('[popup] copy fetch start', { imageUrl });
   let response;
@@ -112,9 +155,12 @@ async function copyImageFromPopup(imageUrl) {
     throw new Error(`Fetched resource is not an image blob (type: ${blob.type || 'unknown'}).`);
   }
 
+  setStatus('Converting...', 'muted');
+  const pngBlob = await convertImageBlobToPng(blob);
+
   try {
-    console.log('[popup] clipboard write start', { mime: blob.type, size: blob.size });
-    const item = new ClipboardItem({ [blob.type]: blob });
+    console.log('[popup] clipboard write start', { mime: 'image/png', size: pngBlob.size });
+    const item = new ClipboardItem({ 'image/png': pngBlob });
     await navigator.clipboard.write([item]);
     console.log('[popup] clipboard write end');
   } catch (error) {
@@ -153,7 +199,7 @@ function makeCard(origin, file) {
     copyBtn.disabled = true;
     try {
       await copyImageFromPopup(imageUrl);
-      setStatus('Copied!', 'ok');
+      setStatus('Copied as PNG', 'ok');
     } catch (error) {
       console.error('[popup] copy failed', error);
       setStatus(error.message || 'Failed to copy image.', 'error');

@@ -241,15 +241,3 @@ Extension:
 # Purpose
 
 Designed for fast, frictionless phone-to-desktop image transfer optimized for ChatGPT workflows.
-
----
-
-# Browser Extension
-
-The browser extension is located in:
-
-extension/
-
-Detailed extension setup, permissions, and technical notes are available in:
-
-extension/README.md

@@ -61,6 +61,7 @@ async function saveOrigin() {
 }
 
 async function loadLatest(origin) {
+  console.log('[popup] refresh fetch start', { endpoint: `${origin}/api/latest` });
   let response;
   try {
     response = await fetch(`${origin}/api/latest`);
@@ -77,6 +78,7 @@ async function loadLatest(origin) {
     throw new Error('Invalid API response. Expected { files:[{name,size,url}] }.');
   }
 
+  console.log('[popup] refresh fetch end', { filesCount: json.files.length });
   return json.files;
 }
 
@@ -117,15 +119,19 @@ function makeCard(origin, file) {
   const copyBtn = document.createElement('button');
   copyBtn.textContent = 'Copy';
   copyBtn.addEventListener('click', async () => {
+    console.log('[popup] copy clicked', { imageUrl });
     setStatus('Copying...', 'muted');
     copyBtn.disabled = true;
     try {
+      console.log('[popup] sending COPY_IMAGE message');
       const result = await chrome.runtime.sendMessage({ type: 'COPY_IMAGE', imageUrl });
+      console.log('[popup] COPY_IMAGE response received', result);
       if (!result?.ok) {
         throw new Error(result?.error || 'Unknown copy error.');
       }
       setStatus('Copied!', 'ok');
     } catch (error) {
+      console.error('[popup] copy failed', error);
       setStatus(error.message || 'Failed to copy image.', 'error');
     } finally {
       copyBtn.disabled = false;
@@ -154,6 +160,7 @@ async function refresh() {
     const files = await loadLatest(origin);
 
     if (files.length === 0) {
+      console.log('[popup] rendering count computed', { apiFilesCount: files.length, renderedCount: 0 });
       setStatus('No files found.', 'muted');
       return;
     }
@@ -167,14 +174,22 @@ async function refresh() {
       }
     }
 
+    const renderedCount = fragment.childNodes.length;
+    console.log('[popup] rendering count computed', {
+      apiFilesCount: files.length,
+      cardsCreatedCount: fragment.childNodes.length,
+      renderedCount
+    });
+
     if (!fragment.childNodes.length) {
       setStatus('No valid image entries found in API response.', 'error');
       return;
     }
 
     gridEl.appendChild(fragment);
-    setStatus(`Loaded ${fragment.childNodes.length} image(s).`, 'ok');
+    setStatus(`Loaded ${renderedCount} image(s).`, 'ok');
   } catch (error) {
+    console.error('[popup] refresh failed', error);
     setStatus(error.message || 'Refresh failed.', 'error');
   } finally {
     refreshBtn.disabled = false;
@@ -182,6 +197,8 @@ async function refresh() {
 }
 
 async function init() {
+  console.log('[popup] popup loaded');
+
   // Browser compatibility guard requested by spec.
   if (!chrome.offscreen) {
     setStatus('Offscreen API not supported in this browser/version. Use updated Brave/Chrome/Edge.', 'error');
@@ -191,6 +208,8 @@ async function init() {
   if (saved) {
     serverInput.value = saved;
   }
+
+  await refresh();
 }
 
 saveBtn.addEventListener('click', saveOrigin);

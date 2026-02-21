@@ -24,11 +24,14 @@ async function ensureOffscreenDocument() {
     throw new Error('Offscreen API not supported in this browser/version. Use updated Brave/Chrome/Edge.');
   }
 
-  if (await hasOffscreenDocument()) {
+  const exists = await hasOffscreenDocument();
+  if (exists) {
+    console.log('[sw] reusing existing offscreen document');
     return;
   }
 
   if (!creatingOffscreen) {
+    console.log('[sw] creating offscreen document');
     creatingOffscreen = chrome.offscreen.createDocument({
       url: OFFSCREEN_PATH,
       reasons: [chrome.offscreen.Reason.CLIPBOARD],
@@ -36,6 +39,8 @@ async function ensureOffscreenDocument() {
     }).finally(() => {
       creatingOffscreen = undefined;
     });
+  } else {
+    console.log('[sw] awaiting in-flight offscreen creation');
   }
 
   await creatingOffscreen;
@@ -47,6 +52,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return undefined;
   }
 
+  console.log('[sw] message received', { type: message.type, imageUrl: message.imageUrl });
+
   (async () => {
     try {
       if (!message.imageUrl || typeof message.imageUrl !== 'string') {
@@ -55,10 +62,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       await ensureOffscreenDocument();
 
+      console.log('[sw] forwarding message to offscreen', { imageUrl: message.imageUrl });
       const result = await chrome.runtime.sendMessage({
         type: 'OFFSCREEN_COPY_IMAGE',
         imageUrl: message.imageUrl
       });
+      console.log('[sw] offscreen response', result);
 
       if (!result?.ok) {
         throw new Error(result?.error || 'Offscreen clipboard operation failed.');
@@ -66,6 +75,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       sendResponse({ ok: true });
     } catch (error) {
+      console.error('[sw] copy flow failed', error);
       sendResponse({ ok: false, error: error.message || 'Service worker error.' });
     }
   })();

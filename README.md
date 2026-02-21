@@ -242,6 +242,8 @@ Extension:
 
 Designed for fast, frictionless phone-to-desktop image transfer optimized for ChatGPT workflows.
 
+---
+
 # Browser Extension
 
 The browser extension is located in:

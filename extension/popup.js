@@ -2,7 +2,6 @@ const STORAGE_KEY = 'serverBaseUrl';
 
 const serverInput = document.getElementById('serverUrl');
 const saveBtn = document.getElementById('saveBtn');
-const refreshBtn = document.getElementById('refreshBtn');
 const statusEl = document.getElementById('status');
 const gridEl = document.getElementById('grid');
 
@@ -220,7 +219,6 @@ function makeCard(origin, file) {
 }
 
 async function refresh() {
-  refreshBtn.disabled = true;
   gridEl.textContent = '';
   try {
     const origin = normalizeServerUrl((await getSavedOrigin()) || serverInput.value || '');
@@ -260,8 +258,6 @@ async function refresh() {
   } catch (error) {
     console.error('[popup] refresh failed', error);
     setStatus(error.message || 'Refresh failed.', 'error');
-  } finally {
-    refreshBtn.disabled = false;
   }
 }
 
@@ -273,9 +269,9 @@ async function init() {
     serverInput.value = saved;
   }
 
+  // Popup auto-refreshes on open so users immediately see latest images.
   await refresh();
 }
 
 saveBtn.addEventListener('click', saveOrigin);
-refreshBtn.addEventListener('click', refresh);
 document.addEventListener('DOMContentLoaded', init);

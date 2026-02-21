@@ -34,9 +34,7 @@ function toHostPattern(origin) {
 async function ensureHostPermission(origin) {
   const pattern = toHostPattern(origin);
   const has = await chrome.permissions.contains({ origins: [pattern] });
-  if (has) {
-    return;
-  }
+  if (has) return;
 
   const granted = await chrome.permissions.request({ origins: [pattern] });
   if (!granted) {
@@ -94,6 +92,37 @@ function buildImageUrl(origin, file) {
   return `${origin}/files/${encodeURIComponent(file.name)}`;
 }
 
+async function copyImageFromPopup(imageUrl) {
+  console.log('[popup] copy fetch start', { imageUrl });
+  let response;
+  try {
+    response = await fetch(imageUrl);
+  } catch (error) {
+    console.error('[popup] copy fetch failed', error);
+    throw new Error('Network/CORS error while downloading image.');
+  }
+
+  console.log('[popup] copy fetch end', { status: response.status });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch image (${response.status}).`);
+  }
+
+  const blob = await response.blob();
+  if (!blob.type || !blob.type.startsWith('image/')) {
+    throw new Error(`Fetched resource is not an image blob (type: ${blob.type || 'unknown'}).`);
+  }
+
+  try {
+    console.log('[popup] clipboard write start', { mime: blob.type, size: blob.size });
+    const item = new ClipboardItem({ [blob.type]: blob });
+    await navigator.clipboard.write([item]);
+    console.log('[popup] clipboard write end');
+  } catch (error) {
+    console.error('[popup] clipboard write failed', error);
+    throw new Error(`Clipboard write denied: ${error?.message || 'unknown error'}`);
+  }
+}
+
 function makeCard(origin, file) {
   const imageUrl = buildImageUrl(origin, file);
 
@@ -123,12 +152,7 @@ function makeCard(origin, file) {
     setStatus('Copying...', 'muted');
     copyBtn.disabled = true;
     try {
-      console.log('[popup] sending COPY_IMAGE message');
-      const result = await chrome.runtime.sendMessage({ type: 'COPY_IMAGE', imageUrl });
-      console.log('[popup] COPY_IMAGE response received', result);
-      if (!result?.ok) {
-        throw new Error(result?.error || 'Unknown copy error.');
-      }
+      await copyImageFromPopup(imageUrl);
       setStatus('Copied!', 'ok');
     } catch (error) {
       console.error('[popup] copy failed', error);
@@ -160,7 +184,7 @@ async function refresh() {
     const files = await loadLatest(origin);
 
     if (files.length === 0) {
-      console.log('[popup] rendering count computed', { apiFilesCount: files.length, renderedCount: 0 });
+      console.log('[popup] rendering count computed', { apiFilesCount: 0, renderedCount: 0 });
       setStatus('No files found.', 'muted');
       return;
     }
@@ -169,19 +193,18 @@ async function refresh() {
     for (const file of files) {
       try {
         fragment.appendChild(makeCard(origin, file));
-      } catch {
-        // Skip malformed entries while still rendering usable rows.
+      } catch (error) {
+        console.error('[popup] skipping malformed file', { file, error });
       }
     }
 
     const renderedCount = fragment.childNodes.length;
     console.log('[popup] rendering count computed', {
       apiFilesCount: files.length,
-      cardsCreatedCount: fragment.childNodes.length,
       renderedCount
     });
 
-    if (!fragment.childNodes.length) {
+    if (!renderedCount) {
       setStatus('No valid image entries found in API response.', 'error');
       return;
     }
@@ -198,11 +221,6 @@ async function refresh() {
 
 async function init() {
   console.log('[popup] popup loaded');
-
-  // Browser compatibility guard requested by spec.
-  if (!chrome.offscreen) {
-    setStatus('Offscreen API not supported in this browser/version. Use updated Brave/Chrome/Edge.', 'error');
-  }
 
   const saved = await getSavedOrigin();
   if (saved) {

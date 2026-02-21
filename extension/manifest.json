@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "LAN Image Clipboard Copier",
-  "version": "1.0.1",
-  "description": "Fetch images from a LAN server and copy image blobs to clipboard via an offscreen document.",
+  "version": "1.0.2",
+  "description": "Fetch images from a LAN server and copy image blobs to clipboard from the popup user gesture.",
   "action": {
     "default_title": "LAN Image Clipboard Copier",
     "default_popup": "popup.html"
@@ -12,8 +12,10 @@
   },
   "permissions": [
     "storage",
-    "offscreen",
     "clipboardWrite"
+  ],
+  "optional_permissions": [
+    "clipboardRead"
   ],
   "optional_host_permissions": [
     "http://*/*",

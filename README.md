@@ -1,47 +1,305 @@
-# photo-gpt
+# Photo GPT Bridge
+
 Fast local phone-to-PC photo bridge for ChatGPT.
 
-## Run the server
+Photo GPT Bridge allows you to:
 
-### 1) Install dependencies
-```bash
+- Upload photos from your phone
+- Access them instantly on your PC
+- Copy images directly to clipboard via browser extension
+- Paste into ChatGPT or other desktop apps
+
+All over your local home network (LAN).  
+No cloud. No external storage.
+
+---
+
+# Project Architecture
+
+This project consists of three parts:
+
+1. Node.js + Express Server
+2. Mobile PWA (Progressive Web App)
+3. Manifest V3 Chrome/Brave Extension
+
+Flow:
+
+Phone → PWA → Local Server → Extension → Clipboard
+
+Uploaded images are stored temporarily in:
+
+data/latest/
+
+Each new upload replaces the previous batch.
+
+---
+
+# Requirements
+
+- Node.js (18+ recommended)
+- npm
+- Chrome or Brave (for extension)
+- Phone and PC connected to the same Wi-Fi network
+
+---
+
+# Server Setup
+
+## 1. Install dependencies
+
 npm install
-```
 
-### 2) Start the server
-```bash
+## 2. Start the server
+
 npm start
-```
 
-The server listens on `0.0.0.0:8787`, so other devices on your home LAN can open:
+Server runs on:
 
-- `http://<your-computer-lan-ip>:8787/` (PWA/static files)
-- `http://<your-computer-lan-ip>:8787/api/latest`
+0.0.0.0:8787
 
-## API overview
+This allows other devices on your LAN to connect.
 
-- `POST /api/upload`
-  - multipart/form-data field: `photos`
-  - accepts up to 20 files
-  - max 12MB per image
-  - accepts only `image/*`
-  - deletes old files in `./data/latest` before saving new upload
-  - response: `{ "files": [{ "name", "size", "url" }] }`
+---
 
-- `GET /api/latest`
-  - response: `{ "files": [{ "name", "size", "url" }] }`
+# Access From Phone
 
-- `GET /files/<filename>`
-  - serves uploaded images from `./data/latest`
-  - `Cache-Control: no-store` is set
+Find your computer’s LAN IP.
 
-## Directory structure
+On Windows:
 
-```text
+ipconfig
+
+Look for:
+
+IPv4 Address
+
+Example:
+
+192.168.1.16
+
+Open on your phone:
+
+http://192.168.1.16:8787
+
+---
+
+# Windows Firewall Configuration (Important)
+
+If your phone cannot connect:
+
+Allow Node.js through firewall:
+
+1. Open Windows Defender Firewall
+2. Click "Allow an app"
+3. Ensure Node.js is allowed on Private networks
+
+OR create manual inbound rule:
+
+- Port: 8787
+- Protocol: TCP
+- Allow connection
+- Apply to: Private network only
+
+---
+
+# Set Network to Private
+
+Windows:
+
+Settings → Network & Internet → Properties →  
+Set network profile to:
+
+Private
+
+If network is Public, LAN connections may be blocked.
+
+---
+
+# PWA Installation
+
+## Android
+
+Works in:
+- Chrome
+- Brave
+- Other Chromium browsers
+
+Can be added to Home Screen.
+
+## iPhone (iOS)
+
+Only Safari fully supports PWA install.
+
+To install:
+
+1. Open in Safari
+2. Tap Share
+3. Tap Add to Home Screen
+
+Brave on iOS does not fully support PWA installation.
+
+---
+
+# Browser Extension Setup
+
+Extension folder: extension/
+
+To install:
+
+1. Open:
+
+brave://extensions
+
+or
+
+chrome://extensions
+
+2. Enable Developer Mode
+3. Click Load unpacked
+4. Select the extension/ folder
+
+---
+
+# First Extension Use
+
+1. Enter your server address:
+
+http://<your-lan-ip>:8787
+
+2. Click Save  
+3. Extension auto-refreshes  
+4. Click Copy  
+
+Images are converted to PNG before clipboard write for Brave compatibility.
+
+---
+
+# API Overview
+
+## POST /api/upload
+
+- multipart/form-data
+- field name: photos
+- accepts up to 20 files
+- max 12MB per image
+- accepts only image/*
+- deletes old files in ./data/latest before saving
+
+Response:
+
+{
+  "files": [
+    { "name": "image.jpg", "size": 12345, "url": "/files/image.jpg" }
+  ]
+}
+
+---
+
+## GET /api/latest
+
+Returns:
+
+{
+  "files": [
+    { "name": "image.jpg", "size": 12345, "url": "/files/image.jpg" }
+  ]
+}
+
+---
+
+## GET /files/<filename>
+
+- Serves uploaded images from ./data/latest
+- Cache-Control: no-store is set
+
+---
+
+# Directory Structure
+
 photo-gpt/
 ├── data/
-│   └── latest/      # active upload batch (replaced each upload)
-├── pwa/             # static files served at /
+│   └── latest/          # active upload batch
+├── pwa/                 # mobile web app
+├── extension/           # browser extension (MV3)
 ├── server.js
-└── package.json
-```
+├── package.json
+└── README.md
+
+---
+
+# Technologies Used
+
+Backend:
+- Node.js
+- Express
+- Multer (file uploads)
+
+PWA:
+- HTML
+- CSS
+- Vanilla JavaScript
+- FormData API
+
+Extension:
+- Chrome / Brave Manifest V3
+- Service Worker
+- Clipboard API
+- Canvas PNG conversion
+
+---
+
+# Security Notes
+
+- Local LAN only
+- No external API calls
+- Files auto-replaced on each upload
+- No persistent multi-user storage
+
+---
+
+# Versioning
+
+Semantic Versioning:
+
+v1.0.0 → Initial stable release  
+Major → Breaking change  
+Minor → Feature addition  
+Patch → Bug fix  
+
+---
+
+# Development Notes
+
+After changing extension code:
+
+Open:
+
+brave://extensions
+
+Click Reload.
+
+After changing server code:
+
+Stop server:
+
+Ctrl + C
+
+Start again:
+
+npm start
+
+---
+
+# Purpose
+
+Designed for fast, frictionless phone-to-desktop image transfer optimized for ChatGPT workflows.
+
+# Browser Extension
+
+The browser extension is located in:
+
+extension/
+
+Detailed extension setup, permissions, and technical notes are available in:
+
+extension/README.md

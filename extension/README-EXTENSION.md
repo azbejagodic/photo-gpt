@@ -1,71 +1,162 @@
-# LAN Image Clipboard Copier (Manifest V3)
+# Photo Bridge Extension (Manifest V3)
 
-## Files
-- `manifest.json`
-- `popup.html`
-- `popup.js`
-- `service_worker.js`
-- `offscreen.html`
-- `offscreen.js`
+Browser extension for copying images from the local Photo GPT Bridge server directly to the clipboard.
 
-## Load unpacked
-1. Open `chrome://extensions`, `brave://extensions`, or `edge://extensions`.
-2. Enable **Developer mode**.
-3. Click **Load unpacked**.
-4. Select the `extension/` folder.
-
-## Use
-1. Open popup.
-2. Enter base server URL (for example `http://192.168.1.50:8787`).
-3. Click **Save** (this requests host permission for the exact origin).
-4. Click **Refresh** to read `GET {SERVER}/api/latest`.
-5. Click **Copy** to copy real image blob, or **Open** to open image tab.
-
-## Permissions
-- `storage`: persist server URL in `chrome.storage.sync`.
-- `offscreen`: create offscreen document for clipboard writes.
-- `clipboardWrite`: allow clipboard write.
-- `optional_host_permissions`: request only the selected origin at runtime (least privilege).
-
-If you prefer simpler setup, you could replace optional host permissions with broad `host_permissions` (`http://*/*`, `https://*/*`), but that grants always-on access to all hosts and is less secure.
-
-## Troubleshooting
-- **Offscreen unsupported**: update Brave/Chrome/Edge to a version with `chrome.offscreen`.
-- **Permission denied**: click Save again and approve host access prompt.
-- **Invalid URL**: use full origin such as `http://192.168.1.50:8787`.
-- **Network/CORS errors**: verify LAN reachability and server behavior.
-- **Clipboard denied**: browser/OS policy blocked write; retry from user click.
+This extension is designed for Chrome, Brave, and other Chromium-based browsers supporting Manifest V3.
 
 ---
 
-## 1) MV3 vs MV2
-Manifest V2 used persistent background pages in many extensions. Manifest V3 uses event-driven service workers and tighter security controls. MV3 reduces background resource usage but background code has no DOM.
+# Files
 
-## 2) Why offscreen document is required
-MV3 service workers cannot directly use DOM APIs, and image clipboard writes are most reliable from a document context. `chrome.offscreen` creates that hidden document so clipboard logic can run safely and compatibly.
+- manifest.json  
+- popup.html  
+- popup.js  
+- service_worker.js  
+- offscreen.html  
+- offscreen.js  
 
-## 3) How ClipboardItem works
-The extension fetches image bytes into a `Blob`, then writes that blob with MIME type mapping:
+---
+
+# Installation (Load Unpacked)
+
+1. Open:
+   - chrome://extensions
+   - brave://extensions
+   - edge://extensions
+
+2. Enable **Developer mode**
+3. Click **Load unpacked**
+4. Select the `extension/` folder
+
+---
+
+# Usage
+
+1. Open the extension popup.
+2. Enter the base server URL, for example:
+
+   http://192.168.1.50:8787
+
+3. Click **Save**  
+   (This requests host permission for that specific origin.)
+4. The popup auto-refreshes and reads:
+
+   GET {SERVER}/api/latest
+
+5. Click:
+   - **Copy** to copy the image blob to clipboard
+   - **Open** to open the image in a new browser tab
+
+---
+
+# Permissions
+
+- storage  
+  Persist server URL using chrome.storage.sync.
+
+- offscreen  
+  Create an offscreen document required for certain clipboard operations.
+
+- clipboardWrite  
+  Allow writing image data to the clipboard.
+
+- optional_host_permissions  
+  Request access only to the specific server origin entered by the user.
+
+If you prefer simpler configuration, you may replace optional host permissions with:
+
+http://*/*  
+https://*/*  
+
+However, this grants broader host access and reduces security.
+
+---
+
+# Troubleshooting
+
+Offscreen unsupported  
+Update your browser to a recent version supporting chrome.offscreen.
+
+Permission denied  
+Click Save again and approve the host access prompt.
+
+Invalid URL  
+Use a full origin including protocol and port, e.g.:
+
+http://192.168.1.50:8787
+
+Network or CORS errors  
+Verify:
+- Phone and PC are on the same network
+- Windows firewall allows port 8787
+- Server is running
+
+Clipboard denied  
+Some browser or OS policies may block clipboard writes. Retry directly from the user click.
+
+---
+
+# Technical Notes
+
+## Manifest V3 vs Manifest V2
+
+Manifest V2 used persistent background pages.  
+Manifest V3 uses event-driven service workers with stricter security.
+
+In MV3:
+- Background code runs in a service worker
+- Service workers have no DOM access
+- Security and permission boundaries are stricter
+
+---
+
+## Why an Offscreen Document Is Used
+
+MV3 service workers cannot access DOM APIs directly.
+
+Image clipboard writes are more reliable from a document context.  
+The chrome.offscreen API creates a hidden document that performs clipboard operations safely.
+
+---
+
+## How ClipboardItem Works
+
+The extension fetches the image as a Blob, then writes it to the clipboard:
 
 ```js
 const item = new ClipboardItem({ [blob.type]: blob });
 await navigator.clipboard.write([item]);
 ```
 
-This copies actual binary image content (not just the URL text).
+This copies actual binary image content, not just the image URL.
 
-## 4) Message passing flow (popup <-> SW <-> offscreen)
-1. Popup sends `COPY_IMAGE` with image URL.
-2. Service worker ensures one offscreen document exists.
-3. Service worker forwards `OFFSCREEN_COPY_IMAGE`.
-4. Offscreen document fetches blob and writes clipboard.
-5. Result propagates back to popup for status updates.
+---
 
-## 5) Security considerations (LAN-only, permissions)
-- Intended for LAN servers you control.
-- URL is user-provided and stored in sync storage.
-- Runtime host permission limits access to selected origin.
-- Avoid granting permissions for untrusted endpoints.
+## Message Passing Flow
 
-## 6) Why host permissions are needed
-Extension code must fetch both `{SERVER}/api/latest` and `{SERVER}/files/<filename>` from a user-entered origin. In Chromium extension security, cross-origin fetch is controlled by extension host permissions, so permission must be granted for that origin.
+1. Popup sends COPY_IMAGE with image URL.
+2. Service worker ensures an offscreen document exists.
+3. Service worker forwards message to offscreen.
+4. Offscreen fetches image and writes clipboard.
+5. Result is returned to popup for status display.
+
+---
+
+## Security Considerations
+
+- Designed for LAN-only use.
+- The server URL is user-provided.
+- Host permissions are requested only for the selected origin.
+- Do not grant permissions for untrusted endpoints.
+
+---
+
+## Why Host Permissions Are Required
+
+The extension must fetch:
+
+- {SERVER}/api/latest
+- {SERVER}/files/<filename>
+
+Chromium extension security restricts cross-origin requests.  
+Explicit host permission is required for the chosen server origin.

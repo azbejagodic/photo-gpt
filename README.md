@@ -174,56 +174,29 @@ Images are converted to PNG before clipboard write for Brave compatibility.
 
 ---
 
-# API Overview
+# API
 
-## POST /api/upload
+POST /api/upload  
+Upload image batch (multipart/form-data, field: photos)
 
-- multipart/form-data
-- field name: photos
-- accepts up to 20 files
-- max 12MB per image
-- accepts only image/*
-- deletes old files in ./data/latest before saving
+GET /api/latest  
+Returns latest uploaded batch
 
-Response:
-
-{
-  "files": [
-    { "name": "image.jpg", "size": 12345, "url": "/files/image.jpg" }
-  ]
-}
-
----
-
-## GET /api/latest
-
-Returns:
-
-{
-  "files": [
-    { "name": "image.jpg", "size": 12345, "url": "/files/image.jpg" }
-  ]
-}
-
----
-
-## GET /files/<filename>
-
-- Serves uploaded images from ./data/latest
-- Cache-Control: no-store is set
+GET /files/<filename>  
+Serves uploaded image
 
 ---
 
 # Directory Structure
 
 photo-gpt/
-├── data/
-│   └── latest/          # active upload batch
-├── pwa/                 # mobile web app
-├── extension/           # browser extension (MV3)
-├── server.js
-├── package.json
-└── README.md
+├─ data/
+│  └─ latest/          # active upload batch
+├─ pwa/                # mobile web app
+├─ extension/           # browser extension (MV3)
+├─ server.js
+├─ package.json
+└─ README.md
 
 ---
 

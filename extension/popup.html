@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LAN Image Clipboard Copier</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 12px; width: 360px; }
+    .row { display: flex; gap: 8px; margin-bottom: 10px; }
+    input { flex: 1; padding: 6px; }
+    button { padding: 6px 10px; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: default; }
+    #status { min-height: 20px; font-size: 12px; margin-bottom: 8px; }
+    .error { color: #b00020; }
+    .ok { color: #0b7a19; }
+    .muted { color: #555; }
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      max-height: 420px;
+      overflow: auto;
+    }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 6px; background: #fafafa; }
+    .thumb-wrap { aspect-ratio: 1 / 1; background: #eee; border-radius: 4px; overflow: hidden; margin-bottom: 6px; }
+    .thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .meta { font-size: 11px; margin-bottom: 6px; word-break: break-all; }
+    .actions { display: flex; gap: 6px; }
+    .actions button { flex: 1; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="row">
+    <input id="serverUrl" type="text" placeholder="http://192.168.x.x:8787" />
+    <button id="saveBtn">Save</button>
+  </div>
+  <div class="row">
+    <button id="refreshBtn">Refresh</button>
+  </div>
+  <div id="status" class="muted"></div>
+  <div id="grid"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -16,12 +16,13 @@ No cloud. No external storage.
 
 # Project Architecture
 
-This project consists of four parts:
+This project consists of five parts:
 
 1. Node.js + Express Server
 2. Mobile PWA (Progressive Web App)
 3. Desktop Dashboard
-4. Manifest V3 Chrome/Brave Extension
+4. Native Electron Desktop App
+5. Manifest V3 Chrome/Brave Extension
 
 Flow:
 
@@ -98,6 +99,8 @@ Allow Node.js through firewall:
 2. Click "Allow an app"
 3. Ensure Node.js is allowed on Private networks
 
+Windows may also show a firewall prompt the first time you run `npm start` or `npm run desktop`. Allow access on Private networks so phones on your Wi-Fi can reach the upload page.
+
 OR create manual inbound rule:
 
 - Port: 8787
@@ -173,6 +176,22 @@ If the PC has multiple LAN IP addresses, the dashboard shows the most likely URL
 
 ---
 
+# Native Desktop App
+
+Run the native desktop app:
+
+```text
+npm run desktop
+```
+
+The Electron app opens the desktop dashboard in its own Photo GPT window with no browser address bar. It reuses an already-running server on port 8787, or starts the same Express server as a separate Node.js process when needed.
+
+The server still listens on `0.0.0.0:8787`, so the phone uses the PC LAN upload URL or QR code shown in the dashboard. The Electron window itself loads `http://localhost:8787/desktop`, and the browser extension still talks to the same local server.
+
+No Windows `.exe` packaging script is included yet; `npm run desktop` is the development/native app launcher.
+
+---
+
 # Browser Extension Setup
 
 Extension folder: extension/
@@ -233,6 +252,7 @@ Serves the desktop dashboard
 ```text
 photo-gpt/
 desktop/             # desktop dashboard
+electron/            # native desktop app wrapper
 ├── data/
 │   └── latest/        # active upload batch
 ├── pwa/               # mobile web app
@@ -262,6 +282,9 @@ Desktop Dashboard:
 - CSS
 - Vanilla JavaScript
 - Canvas QR code rendering
+
+Desktop App:
+- Electron
 
 Extension:
 - Chrome / Brave Manifest V3

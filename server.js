@@ -3,7 +3,7 @@ import cors from 'cors';
 import multer from 'multer';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { promises as fs } from 'fs';
 
 // Recreate __dirname for ES modules so we can build absolute paths safely.
@@ -20,6 +20,7 @@ const desktopDir = path.join(__dirname, 'desktop');
 const pwaDir = path.join(__dirname, 'pwa');
 
 const app = express();
+let serverInstance = null;
 
 // Minimal CORS for LAN usage: allow any local origin to use standard GET/POST requests.
 app.use(
@@ -28,9 +29,6 @@ app.use(
     methods: ['GET', 'POST'],
   })
 );
-
-// Ensure the upload directory exists before handling requests.
-await fs.mkdir(dataDir, { recursive: true });
 
 // Shared helper that builds a consistent API response object for each saved image.
 const toFileRecord = async (name) => {
@@ -221,7 +219,69 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Internal server error.' });
 });
 
-// Bind to 0.0.0.0 for LAN access and start listening on port 8787.
-app.listen(PORT, HOST, () => {
-  console.log(`Photo bridge listening on http://${HOST}:${PORT}`);
-});
+const startServer = async ({ host = HOST, port = PORT, log = true } = {}) => {
+  if (serverInstance?.listening) {
+    return serverInstance;
+  }
+
+  await fs.mkdir(dataDir, { recursive: true });
+
+  return new Promise((resolve, reject) => {
+    const server = app.listen(port, host, () => {
+      serverInstance = server;
+      if (log) {
+        console.log(`Photo bridge listening on http://${host}:${port}`);
+      }
+      resolve(server);
+    });
+
+    server.once('error', reject);
+  });
+};
+
+const stopServer = async () => {
+  if (!serverInstance) {
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    serverInstance.close((err) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve();
+    });
+  });
+  serverInstance = null;
+};
+
+const watchParentProcess = () => {
+  const parentPid = Number(process.env.PHOTO_GPT_PARENT_PID);
+  if (!Number.isInteger(parentPid) || parentPid <= 0) {
+    return;
+  }
+
+  const timer = setInterval(() => {
+    try {
+      process.kill(parentPid, 0);
+    } catch (err) {
+      if (err.code === 'ESRCH') {
+        process.exit(0);
+      }
+    }
+  }, 2000);
+  timer.unref();
+};
+
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectRun) {
+  watchParentProcess();
+  startServer().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+export { app, PORT, HOST, startServer, stopServer };

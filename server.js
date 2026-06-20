@@ -14,7 +14,10 @@ const PORT = 8787;
 const HOST = '0.0.0.0';
 const MAX_FILES = 20;
 const MAX_FILE_SIZE = 12 * 1024 * 1024; // 12MB in bytes.
-const dataDir = path.join(__dirname, 'data', 'latest');
+const IMAGE_ONLY_UPLOAD_ERROR = 'Only image/* files are allowed.';
+const dataRoot = path.join(__dirname, 'data');
+const dataDir = path.join(dataRoot, 'latest');
+const uploadTempRoot = path.join(dataRoot, 'upload-tmp');
 const pwaDir = path.join(__dirname, 'pwa');
 
 const app = express();
@@ -27,8 +30,9 @@ app.use(
   })
 );
 
-// Ensure the upload directory exists before handling requests.
+// Ensure the upload directories exist before handling requests.
 await fs.mkdir(dataDir, { recursive: true });
+await fs.mkdir(uploadTempRoot, { recursive: true });
 
 // Shared helper that builds a consistent API response object for each saved image.
 const toFileRecord = async (name) => {
@@ -60,9 +64,64 @@ const listLatestFiles = async () => {
   return Promise.all(filesOnly.map((file) => toFileRecord(file.name)));
 };
 
+const cleanupDirectory = async (dir) => {
+  if (!dir) {
+    return;
+  }
+
+  await fs.rm(dir, { recursive: true, force: true });
+};
+
+const createUploadTempDir = async (req, _res, next) => {
+  try {
+    req.uploadTempDir = await fs.mkdtemp(path.join(uploadTempRoot, 'batch-'));
+    next();
+  } catch (err) {
+    next(err);
+  }
+};
+
+const replaceLatestBatch = async (newBatchDir) => {
+  const swapParentDir = await fs.mkdtemp(path.join(uploadTempRoot, 'swap-'));
+  const previousBatchDir = path.join(swapParentDir, 'previous');
+  let previousBatchMoved = false;
+  let newBatchMoved = false;
+
+  try {
+    await fs.rename(dataDir, previousBatchDir);
+    previousBatchMoved = true;
+
+    try {
+      await fs.rename(newBatchDir, dataDir);
+      newBatchMoved = true;
+    } catch (err) {
+      try {
+        await fs.rename(previousBatchDir, dataDir);
+        previousBatchMoved = false;
+      } catch (restoreErr) {
+        err.restoreError = restoreErr;
+      }
+      throw err;
+    }
+  } finally {
+    if (newBatchMoved || !previousBatchMoved) {
+      await cleanupDirectory(swapParentDir).catch((err) => {
+        console.warn('Could not remove upload swap directory:', err);
+      });
+    }
+  }
+};
+
 // Multer storage controls where and how incoming files are written to disk.
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, dataDir),
+  destination: (req, _file, cb) => {
+    if (!req.uploadTempDir) {
+      cb(new Error('Upload staging directory was not prepared.'));
+      return;
+    }
+
+    cb(null, req.uploadTempDir);
+  },
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname);
     const safeBaseName = path
@@ -87,52 +146,61 @@ const upload = multer({
       cb(null, true);
       return;
     }
-    cb(new Error('Only image/* files are allowed.'));
+    cb(new Error(IMAGE_ONLY_UPLOAD_ERROR));
   },
 });
 
 // Error middleware specifically for Multer failures and input validation issues.
-const uploadErrorHandler = (err, _req, res, next) => {
+const uploadErrorHandler = (err, req, res, next) => {
   if (!err) {
     next();
     return;
   }
 
-  if (err instanceof multer.MulterError) {
-    let message = err.message;
-    if (err.code === 'LIMIT_FILE_COUNT') {
-      message = `Maximum ${MAX_FILES} files are allowed.`;
-    }
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      message = `Each image must be <= 12MB.`;
-    }
-    res.status(400).json({ error: message });
-    return;
-  }
+  cleanupDirectory(req.uploadTempDir)
+    .catch((cleanupErr) => {
+      console.warn('Could not clean failed upload directory:', cleanupErr);
+    })
+    .finally(() => {
+      if (!(err instanceof multer.MulterError) && err.message !== IMAGE_ONLY_UPLOAD_ERROR) {
+        next(err);
+        return;
+      }
 
-  res.status(400).json({ error: err.message || 'Upload failed.' });
+      let message = err.message;
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        message = `Maximum ${MAX_FILES} files are allowed.`;
+      }
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        message = `Each image must be <= 12MB.`;
+      }
+      res.status(400).json({ error: message || 'Upload failed.' });
+    });
 };
 
 // POST /api/upload:
-// 1) Remove old files from the active batch directory.
-// 2) Accept new multipart images from field name "photos".
-// 3) Return metadata for the newly stored files.
-app.post('/api/upload', async (req, res, next) => {
-  try {
-    const existingNames = await fs.readdir(dataDir);
-    await Promise.all(existingNames.map((name) => fs.rm(path.join(dataDir, name), { force: true, recursive: true })));
-    next();
-  } catch (err) {
-    next(err);
+// 1) Stage multipart images from field name "photos" in a temporary directory.
+// 2) Replace the active batch only after Multer accepts the full upload.
+// 3) Return metadata for the newly active files.
+app.post(
+  '/api/upload',
+  createUploadTempDir,
+  upload.array('photos', MAX_FILES),
+  uploadErrorHandler,
+  async (req, res, next) => {
+    try {
+      await replaceLatestBatch(req.uploadTempDir);
+      req.uploadTempDir = null;
+      const files = await listLatestFiles();
+      res.json({ files });
+    } catch (err) {
+      await cleanupDirectory(req.uploadTempDir).catch((cleanupErr) => {
+        console.warn('Could not clean staged upload directory:', cleanupErr);
+      });
+      next(err);
+    }
   }
-}, upload.array('photos', MAX_FILES), uploadErrorHandler, async (_req, res, next) => {
-  try {
-    const files = await listLatestFiles();
-    res.json({ files });
-  } catch (err) {
-    next(err);
-  }
-});
+);
 
 // GET /api/latest returns the current active batch stored in ./data/latest.
 app.get('/api/latest', async (_req, res, next) => {

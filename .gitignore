@@ -141,3 +141,6 @@ vite.config.ts.timestamp-*
 # Runtime uploads (local only)
 data/latest/*
 !data/latest/.gitkeep
+
+# Temporary upload staging
+data/upload-tmp/

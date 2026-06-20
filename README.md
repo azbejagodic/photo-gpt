@@ -139,6 +139,7 @@ To install:
 1. Open in Safari
 2. Tap Share
 3. Tap Add to Home Screen
+4. If you already had an old Home Screen shortcut, delete it and add it again after this update so iOS picks up the standalone app metadata and icon.
 
 Brave on iOS does not fully support PWA installation.
 

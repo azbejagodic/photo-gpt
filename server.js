@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { promises as fs } from 'fs';
@@ -15,6 +16,7 @@ const HOST = '0.0.0.0';
 const MAX_FILES = 20;
 const MAX_FILE_SIZE = 12 * 1024 * 1024; // 12MB in bytes.
 const dataDir = path.join(__dirname, 'data', 'latest');
+const desktopDir = path.join(__dirname, 'desktop');
 const pwaDir = path.join(__dirname, 'pwa');
 
 const app = express();
@@ -58,6 +60,44 @@ const listLatestFiles = async () => {
   filesOnly.sort((a, b) => a.mtimeMs - b.mtimeMs);
 
   return Promise.all(filesOnly.map((file) => toFileRecord(file.name)));
+};
+
+const isPrivateIpv4 = (address) => (
+  address.startsWith('10.') ||
+  address.startsWith('192.168.') ||
+  /^172\.(1[6-9]|2\d|3[0-1])\./.test(address)
+);
+
+const getIpv4Rank = (address) => {
+  if (address.startsWith('192.168.')) return 0;
+  if (address.startsWith('10.')) return 1;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(address)) return 2;
+  if (address.startsWith('169.254.')) return 4;
+  return 3;
+};
+
+const getLanIpv4Addresses = () => {
+  const seen = new Set();
+  const addresses = [];
+
+  for (const interfaces of Object.values(os.networkInterfaces())) {
+    for (const details of interfaces || []) {
+      if (details.family !== 'IPv4' || details.internal || seen.has(details.address)) {
+        continue;
+      }
+
+      seen.add(details.address);
+      addresses.push({
+        address: details.address,
+        private: isPrivateIpv4(details.address),
+      });
+    }
+  }
+
+  return addresses.sort((a, b) => (
+    getIpv4Rank(a.address) - getIpv4Rank(b.address) ||
+    a.address.localeCompare(b.address)
+  ));
 };
 
 // Multer storage controls where and how incoming files are written to disk.
@@ -144,12 +184,33 @@ app.get('/api/latest', async (_req, res, next) => {
   }
 });
 
+// GET /api/phone-url returns LAN URLs the desktop dashboard can show and encode as a QR code.
+app.get('/api/phone-url', (req, res) => {
+  const lanUrls = getLanIpv4Addresses().map(({ address, private: isPrivate }) => ({
+    address,
+    private: isPrivate,
+    url: `http://${address}:${PORT}`,
+  }));
+  const requestHost = req.get('host') || `localhost:${PORT}`;
+  const fallbackUrl = `http://${requestHost}`;
+  const urls = lanUrls.length > 0 ? lanUrls : [{ address: requestHost.split(':')[0], private: false, url: fallbackUrl }];
+
+  res.json({
+    port: PORT,
+    primaryUrl: urls[0].url,
+    urls,
+  });
+});
+
 // Serve uploaded files with no-store so phones/clients always fetch the newest images.
 app.use('/files', express.static(dataDir, {
   setHeaders: (res) => {
     res.setHeader('Cache-Control', 'no-store');
   },
 }));
+
+// Serve the desktop dashboard separately from the phone PWA.
+app.use('/desktop', express.static(desktopDir));
 
 // Serve the PWA front-end files from ./pwa at the web root.
 app.use('/', express.static(pwaDir));

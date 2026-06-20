@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Photo GPT Desktop Dashboard</title>
+  <link rel="stylesheet" href="/desktop/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">LAN photo bridge</p>
+      <h1>Desktop dashboard</h1>
+    </div>
+    <button id="refreshBtn" class="button primary" type="button">Refresh</button>
+  </header>
+
+  <main class="layout">
+    <section class="setup-section" aria-labelledby="setupTitle">
+      <div class="setup-copy">
+        <p class="eyebrow">Phone setup</p>
+        <h2 id="setupTitle">Upload from your phone</h2>
+        <label for="phoneUrl">Phone upload URL</label>
+        <div class="url-row">
+          <input id="phoneUrl" type="text" readonly />
+          <button id="copyPhoneUrlBtn" class="button secondary" type="button">Copy Phone URL</button>
+        </div>
+        <p id="setupStatus" class="status" aria-live="polite"></p>
+        <div id="alternateUrls" class="alternate-urls" hidden></div>
+      </div>
+
+      <div class="qr-box">
+        <canvas id="phoneQr" aria-label="QR code for phone upload URL"></canvas>
+        <p id="qrFallback" class="status"></p>
+      </div>
+    </section>
+
+    <section class="photos-section" aria-labelledby="photosTitle">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Latest batch</p>
+          <h2 id="photosTitle">Uploaded photos</h2>
+        </div>
+        <p id="photoSummary" class="summary" aria-live="polite">Loading photos...</p>
+      </div>
+
+      <div id="emptyState" class="empty-state" hidden>
+        <h3>No uploaded photos</h3>
+        <p>Use the phone upload page, then refresh this dashboard.</p>
+      </div>
+
+      <div id="photoGrid" class="photo-grid"></div>
+    </section>
+  </main>
+
+  <script src="/desktop/app.js" defer></script>
+</body>
+</html>

@@ -16,11 +16,12 @@ No cloud. No external storage.
 
 # Project Architecture
 
-This project consists of three parts:
+This project consists of four parts:
 
 1. Node.js + Express Server
 2. Mobile PWA (Progressive Web App)
-3. Manifest V3 Chrome/Brave Extension
+3. Desktop Dashboard
+4. Manifest V3 Chrome/Brave Extension
 
 Flow:
 
@@ -145,6 +146,33 @@ Brave on iOS does not fully support PWA installation.
 
 ---
 
+# Desktop Dashboard
+
+Open the dashboard on the PC running the server:
+
+```text
+http://localhost:8787/desktop
+```
+
+The dashboard shows:
+
+- The phone upload URL using the PC LAN IP when available
+- A QR code for opening the phone upload page
+- The latest uploaded photo batch
+- Open and Download buttons for each photo
+
+To use it:
+
+1. Start the server with `npm start`
+2. Open `http://localhost:8787/desktop` on the PC
+3. Scan the QR code with your phone
+4. Upload photos from the phone page
+5. Click Refresh on the dashboard
+
+If the PC has multiple LAN IP addresses, the dashboard shows the most likely URL first and lists the other detected URLs.
+
+---
+
 # Browser Extension Setup
 
 Extension folder: extension/
@@ -187,8 +215,14 @@ Upload image batch (multipart/form-data, field: photos)
 GET /api/latest  
 Returns latest uploaded batch
 
+GET /api/phone-url
+Returns detected LAN phone upload URLs for the desktop dashboard
+
 GET /files/<filename>  
 Serves uploaded image
+
+GET /desktop
+Serves the desktop dashboard
 
 ---
 
@@ -198,6 +232,7 @@ Serves uploaded image
 
 ```text
 photo-gpt/
+desktop/             # desktop dashboard
 ├── data/
 │   └── latest/        # active upload batch
 ├── pwa/               # mobile web app
@@ -221,6 +256,12 @@ PWA:
 - CSS
 - Vanilla JavaScript
 - FormData API
+
+Desktop Dashboard:
+- HTML
+- CSS
+- Vanilla JavaScript
+- Canvas QR code rendering
 
 Extension:
 - Chrome / Brave Manifest V3

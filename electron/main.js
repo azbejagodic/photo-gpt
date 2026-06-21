@@ -1,5 +1,6 @@
 import { app as electronApp, BrowserWindow, dialog, shell } from 'electron';
 import { spawn } from 'child_process';
+import { promises as fs } from 'fs';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -13,8 +14,11 @@ const PORT = 8787;
 const SERVER_ORIGIN = `http://localhost:${PORT}`;
 const DASHBOARD_URL = `${SERVER_ORIGIN}/desktop`;
 
+electronApp.setName('Photo GPT');
+
 let mainWindow = null;
 let ownedServerProcess = null;
+let serverLaunchMode = 'unknown';
 
 const delay = (ms) => new Promise((resolve) => {
   setTimeout(resolve, ms);
@@ -41,6 +45,44 @@ const isDashboardReachable = (url) => new Promise((resolve) => {
   });
 });
 
+const getJson = (url) => new Promise((resolve, reject) => {
+  const req = http.get(url, (res) => {
+    let body = '';
+    res.setEncoding('utf8');
+    res.on('data', (chunk) => {
+      body += chunk;
+    });
+    res.on('end', () => {
+      try {
+        resolve(JSON.parse(body));
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+
+  req.on('error', reject);
+  req.setTimeout(1500, () => {
+    req.destroy(new Error(`Timed out requesting ${url}`));
+  });
+});
+
+const getStartupLogPath = () => path.join(electronApp.getPath('userData'), 'startup.log');
+
+const writeStartupLog = async (event, details = {}) => {
+  const logPath = getStartupLogPath();
+  const record = {
+    time: new Date().toISOString(),
+    event,
+    dashboardUrl: DASHBOARD_URL,
+    ...details,
+  };
+
+  console.log('Photo GPT startup:', record);
+  await fs.mkdir(path.dirname(logPath), { recursive: true });
+  await fs.appendFile(logPath, `${JSON.stringify(record)}\n`);
+};
+
 const waitForDashboard = async () => {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (await isDashboardReachable(DASHBOARD_URL)) {
@@ -54,23 +96,52 @@ const waitForDashboard = async () => {
 
 const ensureServer = async () => {
   if (await isDashboardReachable(DASHBOARD_URL)) {
+    serverLaunchMode = 'reused';
+    const status = await getJson(`${SERVER_ORIGIN}/api/server-status`).catch((err) => ({ statusError: err.message }));
+    await writeStartupLog('server-reused', {
+      serverStatus: status,
+      logFile: getStartupLogPath(),
+    });
     return;
   }
 
-  const nodePath = process.env.npm_node_execpath || process.env.NODE || 'node';
+  const isPackaged = electronApp.isPackaged;
+  const nodePath = isPackaged ? process.execPath : process.env.npm_node_execpath || process.env.NODE || 'node';
+  const runtimeDataRoot = isPackaged ? path.join(electronApp.getPath('userData'), 'data') : '';
+  const logPath = getStartupLogPath();
+  const childEnv = {
+    ...process.env,
+    PHOTO_GPT_PARENT_PID: String(process.pid),
+    PHOTO_GPT_LOG_FILE: logPath,
+    PHOTO_GPT_SERVER_SOURCE: isPackaged ? 'electron-packaged-child' : 'electron-dev-child',
+  };
+
+  if (isPackaged) {
+    childEnv.ELECTRON_RUN_AS_NODE = '1';
+    childEnv.PHOTO_GPT_DATA_DIR = runtimeDataRoot;
+    childEnv.PHOTO_GPT_PACKAGED = '1';
+  }
+
+  await writeStartupLog('server-starting', {
+    nodePath,
+    serverPath,
+    bindHost: '0.0.0.0',
+    port: PORT,
+    runtimeDataDir: runtimeDataRoot || path.join(projectRoot, 'data'),
+    logFile: logPath,
+  });
+
   ownedServerProcess = spawn(nodePath, [serverPath], {
     cwd: projectRoot,
-    env: {
-      ...process.env,
-      PHOTO_GPT_PARENT_PID: String(process.pid),
-    },
-    stdio: 'inherit',
+    env: childEnv,
+    stdio: isPackaged ? 'ignore' : 'inherit',
     windowsHide: true,
   });
 
   ownedServerProcess.once('exit', (code, signal) => {
     if (ownedServerProcess) {
       console.error(`Photo GPT server process exited early (${signal || code}).`);
+      writeStartupLog('server-exited-early', { code, signal }).catch(() => {});
       ownedServerProcess = null;
     }
   });
@@ -80,6 +151,13 @@ const ensureServer = async () => {
     cleanupOwnedServer();
     throw new Error(`The local dashboard did not become ready at ${DASHBOARD_URL}.`);
   }
+
+  serverLaunchMode = 'started';
+  const status = await getJson(`${SERVER_ORIGIN}/api/server-status`).catch((err) => ({ statusError: err.message }));
+  await writeStartupLog('server-started', {
+    serverStatus: status,
+    logFile: logPath,
+  });
 };
 
 const isLocalAppUrl = (targetUrl) => {
@@ -136,7 +214,10 @@ const createWindow = async () => {
     mainWindow = null;
   });
 
-  await mainWindow.loadURL(DASHBOARD_URL);
+  const url = new URL(DASHBOARD_URL);
+  url.searchParams.set('launcher', 'electron');
+  url.searchParams.set('server', serverLaunchMode);
+  await mainWindow.loadURL(url.toString());
 };
 
 const cleanupOwnedServer = () => {

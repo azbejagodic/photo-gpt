@@ -8,6 +8,10 @@ const qrFallback = document.getElementById('qrFallback');
 const photoSummary = document.getElementById('photoSummary');
 const emptyState = document.getElementById('emptyState');
 const photoGrid = document.getElementById('photoGrid');
+const diagnosticsSummary = document.getElementById('diagnosticsSummary');
+const diagnosticsList = document.getElementById('diagnosticsList');
+const diagnosticsWarning = document.getElementById('diagnosticsWarning');
+const diagnosticsUrls = document.getElementById('diagnosticsUrls');
 
 const QR_VERSION = 2;
 const QR_SIZE = 17 + QR_VERSION * 4;
@@ -17,6 +21,7 @@ const GF_EXP = [];
 const GF_LOG = [];
 
 let currentPhoneUrl = '';
+const launchParams = new URLSearchParams(window.location.search);
 
 function initGaloisTables() {
   let value = 1;
@@ -410,6 +415,77 @@ function renderAlternateUrls(urls) {
   alternateUrls.append(title, list);
 }
 
+function renderUrlList(container, titleText, urls) {
+  if (!Array.isArray(urls) || urls.length === 0) {
+    container.hidden = true;
+    container.innerHTML = '';
+    return;
+  }
+
+  container.hidden = false;
+  container.innerHTML = '';
+  const title = document.createElement('h3');
+  title.textContent = titleText;
+  const list = document.createElement('ul');
+
+  urls.forEach((item) => {
+    const listItem = document.createElement('li');
+    const link = document.createElement('a');
+    link.href = item.url;
+    link.textContent = item.private ? `${item.url} (private LAN)` : item.url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    listItem.appendChild(link);
+    list.appendChild(listItem);
+  });
+
+  container.append(title, list);
+}
+
+function addDiagnosticRow(label, value) {
+  const term = document.createElement('dt');
+  term.textContent = label;
+  const description = document.createElement('dd');
+  description.textContent = value || 'Not available';
+  diagnosticsList.append(term, description);
+}
+
+function getLauncherStatus() {
+  const serverMode = launchParams.get('server');
+  if (serverMode === 'started') {
+    return 'Electron started the local server';
+  }
+  if (serverMode === 'reused') {
+    return 'Electron reused an existing server';
+  }
+  return 'Browser or unknown launcher';
+}
+
+function renderDiagnostics(data) {
+  diagnosticsList.innerHTML = '';
+  diagnosticsSummary.textContent = data.status === 'listening' ? 'Server is listening.' : 'Server status is unknown.';
+
+  addDiagnosticRow('Server status', data.status || 'unknown');
+  addDiagnosticRow('Launcher', getLauncherStatus());
+  addDiagnosticRow('Server source', data.launchSource || 'unknown');
+  addDiagnosticRow('Bind host', data.bindHost || data.configuredHost || 'unknown');
+  addDiagnosticRow('Port', String(data.port || 'unknown'));
+  addDiagnosticRow('Primary phone URL', data.primaryLanUrl || 'No LAN URL detected');
+  addDiagnosticRow('Runtime data', data.runtimeDataDir || 'unknown');
+  addDiagnosticRow('Upload staging', data.uploadTempDir || 'unknown');
+
+  const privateLanUrls = Array.isArray(data.lanUrls) ? data.lanUrls.filter((item) => item.private) : [];
+  renderUrlList(diagnosticsUrls, 'Detected LAN URLs', data.lanUrls || []);
+
+  if (privateLanUrls.length === 0) {
+    diagnosticsWarning.hidden = false;
+    diagnosticsWarning.textContent = 'No private LAN IPv4 address was detected. Make sure the PC is connected to the same Wi-Fi as the phone, the network profile is Private, and Windows Firewall allows Photo GPT on Private networks.';
+  } else {
+    diagnosticsWarning.hidden = false;
+    diagnosticsWarning.textContent = 'Phone checklist: use the LAN URL above, keep phone and PC on the same Wi-Fi, set the PC network to Private, and allow Photo GPT through Windows Firewall on Private networks if Windows asks.';
+  }
+}
+
 function renderPhoneSetup(data) {
   currentPhoneUrl = data.primaryUrl || window.location.origin;
   phoneUrlInput.value = currentPhoneUrl;
@@ -498,6 +574,21 @@ async function loadPhoneSetup() {
   }
 }
 
+async function loadDiagnostics() {
+  try {
+    const response = await fetch('/api/server-status');
+    if (!response.ok) {
+      throw new Error(`Server status request failed (${response.status})`);
+    }
+    renderDiagnostics(await response.json());
+  } catch (error) {
+    diagnosticsList.innerHTML = '';
+    diagnosticsSummary.textContent = error.message || 'Could not load server diagnostics.';
+    diagnosticsWarning.hidden = false;
+    diagnosticsWarning.textContent = 'Check that the local server is running and reload the dashboard.';
+  }
+}
+
 async function loadPhotos() {
   refreshBtn.disabled = true;
   photoSummary.textContent = 'Refreshing...';
@@ -537,4 +628,5 @@ copyPhoneUrlBtn.addEventListener('click', async () => {
 });
 
 loadPhoneSetup();
+loadDiagnostics();
 loadPhotos();

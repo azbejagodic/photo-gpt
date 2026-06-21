@@ -15,9 +15,14 @@ const PORT = 8787;
 const HOST = '0.0.0.0';
 const MAX_FILES = 20;
 const MAX_FILE_SIZE = 12 * 1024 * 1024; // 12MB in bytes.
-const dataDir = path.join(__dirname, 'data', 'latest');
+const dataRoot = process.env.PHOTO_GPT_DATA_DIR || path.join(__dirname, 'data');
+const dataDir = path.join(dataRoot, 'latest');
+const uploadTempDir = path.join(dataRoot, 'upload-tmp');
 const desktopDir = path.join(__dirname, 'desktop');
 const pwaDir = path.join(__dirname, 'pwa');
+const startupLogPath = process.env.PHOTO_GPT_LOG_FILE || '';
+const launchSource = process.env.PHOTO_GPT_SERVER_SOURCE || (process.env.PHOTO_GPT_PARENT_PID ? 'electron' : 'standalone');
+const isPackagedRuntime = process.env.PHOTO_GPT_PACKAGED === '1';
 
 const app = express();
 let serverInstance = null;
@@ -96,6 +101,47 @@ const getLanIpv4Addresses = () => {
     getIpv4Rank(a.address) - getIpv4Rank(b.address) ||
     a.address.localeCompare(b.address)
   ));
+};
+
+const getPhoneUrlRecords = () => getLanIpv4Addresses().map(({ address, private: isPrivate }) => ({
+  address,
+  private: isPrivate,
+  url: `http://${address}:${PORT}`,
+}));
+
+const getServerStatus = () => {
+  const address = serverInstance?.address?.();
+  const boundAddress = address && typeof address === 'object' ? address.address : HOST;
+  const boundPort = address && typeof address === 'object' ? address.port : PORT;
+  const lanUrls = getPhoneUrlRecords();
+
+  return {
+    status: serverInstance?.listening ? 'listening' : 'starting',
+    configuredHost: HOST,
+    bindHost: boundAddress || HOST,
+    port: boundPort || PORT,
+    lanUrls,
+    primaryLanUrl: lanUrls[0]?.url || '',
+    launchSource,
+    packaged: isPackagedRuntime,
+    runtimeDataDir: dataRoot,
+    latestDir: dataDir,
+    uploadTempDir,
+    pid: process.pid,
+  };
+};
+
+const appendStartupLog = async (event, details = {}) => {
+  if (!startupLogPath) {
+    return;
+  }
+
+  await fs.mkdir(path.dirname(startupLogPath), { recursive: true });
+  await fs.appendFile(startupLogPath, `${JSON.stringify({
+    time: new Date().toISOString(),
+    event,
+    ...details,
+  })}\n`);
 };
 
 // Multer storage controls where and how incoming files are written to disk.
@@ -184,11 +230,7 @@ app.get('/api/latest', async (_req, res, next) => {
 
 // GET /api/phone-url returns LAN URLs the desktop dashboard can show and encode as a QR code.
 app.get('/api/phone-url', (req, res) => {
-  const lanUrls = getLanIpv4Addresses().map(({ address, private: isPrivate }) => ({
-    address,
-    private: isPrivate,
-    url: `http://${address}:${PORT}`,
-  }));
+  const lanUrls = getPhoneUrlRecords();
   const requestHost = req.get('host') || `localhost:${PORT}`;
   const fallbackUrl = `http://${requestHost}`;
   const urls = lanUrls.length > 0 ? lanUrls : [{ address: requestHost.split(':')[0], private: false, url: fallbackUrl }];
@@ -198,6 +240,11 @@ app.get('/api/phone-url', (req, res) => {
     primaryUrl: urls[0].url,
     urls,
   });
+});
+
+// GET /api/server-status returns LAN diagnostics for desktop troubleshooting.
+app.get('/api/server-status', (_req, res) => {
+  res.json(getServerStatus());
 });
 
 // Serve uploaded files with no-store so phones/clients always fetch the newest images.
@@ -225,13 +272,20 @@ const startServer = async ({ host = HOST, port = PORT, log = true } = {}) => {
   }
 
   await fs.mkdir(dataDir, { recursive: true });
+  await fs.mkdir(uploadTempDir, { recursive: true });
 
   return new Promise((resolve, reject) => {
     const server = app.listen(port, host, () => {
       serverInstance = server;
+      const status = getServerStatus();
       if (log) {
         console.log(`Photo bridge listening on http://${host}:${port}`);
+        console.log(`Photo GPT runtime data: ${dataRoot}`);
+        console.log(`Photo GPT LAN URLs: ${status.lanUrls.map((item) => item.url).join(', ') || 'none detected'}`);
       }
+      appendStartupLog('server-listening', status).catch((err) => {
+        console.warn('Could not write startup diagnostics:', err);
+      });
       resolve(server);
     });
 

@@ -34,6 +34,8 @@ data/latest/
 
 Each new upload replaces the previous batch.
 
+Packaged Windows builds do not include uploaded photos. Runtime photos and temporary upload files are created on the user's PC when the app runs.
+
 ---
 
 # Requirements
@@ -65,6 +67,19 @@ Server runs on:
 
 This allows other devices on your LAN to connect.
 
+## Developer commands
+
+```text
+npm install
+npm start
+npm run desktop
+npm run dist
+```
+
+- `npm start` runs the normal Express server.
+- `npm run desktop` opens the Electron desktop app in development.
+- `npm run dist` builds the Windows desktop app into `dist/`.
+
 ---
 
 # Access From Phone
@@ -91,22 +106,26 @@ http://192.168.1.16:8787
 
 # Windows Firewall Configuration (Important)
 
-If your phone cannot connect:
+For normal Windows users, use the Setup installer:
 
-Allow Node.js through firewall:
+```text
+dist/Photo GPT Setup 1.0.0-x64.exe
+```
 
-1. Open Windows Defender Firewall
-2. Click "Allow an app"
-3. Ensure Node.js is allowed on Private networks
+The Setup installer requests the normal Windows elevation prompt and adds this inbound firewall rule:
 
-Windows may also show a firewall prompt the first time you run `npm start` or `npm run desktop`. Allow access on Private networks so phones on your Wi-Fi can reach the upload page.
-
-OR create manual inbound rule:
-
-- Port: 8787
+- Rule name: Photo GPT LAN Upload
+- Direction: inbound
+- Action: allow
 - Protocol: TCP
-- Allow connection
-- Apply to: Private network only
+- Local port: 8787
+- Profile: Private only
+
+The rule allows phones on the same private LAN to reach Photo GPT on port 8787. It is removed when Photo GPT is uninstalled through the same installer/uninstaller flow.
+
+Do not use a Public network profile for phone uploads. The firewall rule is intentionally Private-only and does not open Photo GPT on Public networks.
+
+Development modes (`npm start` and `npm run desktop`) may still trigger a Windows firewall prompt for Node.js. Allow access on Private networks if prompted.
 
 ---
 
@@ -188,7 +207,54 @@ The Electron app opens the desktop dashboard in its own Photo GPT window with no
 
 The server still listens on `0.0.0.0:8787`, so the phone uses the PC LAN upload URL or QR code shown in the dashboard. The Electron window itself loads `http://localhost:8787/desktop`, and the browser extension still talks to the same local server.
 
-No Windows `.exe` packaging script is included yet; `npm run desktop` is the development/native app launcher.
+## Windows build
+
+Build the Windows app:
+
+```text
+npm run dist
+```
+
+The build uses electron-builder and writes output to:
+
+```text
+dist/
+```
+
+The build produces both a Windows installer and a portable executable:
+
+```text
+dist/Photo GPT Setup 1.0.0-x64.exe
+dist/Photo GPT-1.0.0-portable-x64.exe
+```
+
+Use the Setup installer for normal users. It installs Photo GPT to a stable app path and creates the Private-network Windows Firewall rule for TCP port 8787. The portable executable is useful for quick testing, but it does not run the installer-time firewall setup.
+
+In development, runtime uploads use `data/latest/` and temporary staging uses `data/upload-tmp/` inside the repo. In the packaged Windows app, those folders are created under the app's Windows user data directory instead, so builds do not ship old photos.
+
+## Normal user flow
+
+1. Download or copy `dist/Photo GPT Setup 1.0.0-x64.exe`
+2. Run the Setup installer and approve the Windows elevation prompt
+3. Launch Photo GPT
+4. Connect the phone and PC to the same home Wi-Fi
+5. Confirm the PC network profile is Private
+6. Scan the QR code or open the phone LAN URL shown in the dashboard
+7. Upload photos from the phone
+8. Use the dashboard or browser extension on the PC
+
+## LAN troubleshooting
+
+The dashboard shows a Server diagnostics section with the bind host, port, detected LAN URLs, launch mode, and runtime data directory.
+
+If the PC dashboard works but the phone cannot connect:
+
+1. Confirm the PC network profile is Private
+2. Confirm the phone and PC are on the same Wi-Fi
+3. Use the LAN URL shown in the dashboard, not `localhost`
+4. Use the Setup installer so the `Photo GPT LAN Upload` firewall rule is created
+5. Check for guest Wi-Fi, VPN routing, router/AP client isolation, or third-party antivirus firewall rules
+6. Prefer the installer build over the portable build for everyday use
 
 ---
 
@@ -236,6 +302,9 @@ Returns latest uploaded batch
 
 GET /api/phone-url
 Returns detected LAN phone upload URLs for the desktop dashboard
+
+GET /api/server-status
+Returns local server diagnostics for LAN troubleshooting
 
 GET /files/<filename>  
 Serves uploaded image
@@ -300,6 +369,7 @@ Extension:
 - No external API calls
 - Files auto-replaced on each upload
 - No persistent multi-user storage
+- Uploaded photos are runtime data and are not included in packaged builds
 
 ---
 

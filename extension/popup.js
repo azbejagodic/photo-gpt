@@ -1,4 +1,6 @@
 const STORAGE_KEY = 'serverBaseUrl';
+const DEFAULT_SERVER_ORIGIN = 'http://localhost:8787';
+const LOOPBACK_FALLBACK_ORIGIN = 'http://127.0.0.1:8787';
 
 const serverInput = document.getElementById('serverUrl');
 const saveBtn = document.getElementById('saveBtn');
@@ -15,7 +17,7 @@ function normalizeServerUrl(raw) {
   try {
     parsed = new URL(raw.trim());
   } catch {
-    throw new Error('Invalid server URL. Example: http://192.168.1.10:8787');
+    throw new Error('Invalid server URL. Example: http://localhost:8787');
   }
 
   if (!/^https?:$/.test(parsed.protocol)) {
@@ -23,6 +25,15 @@ function normalizeServerUrl(raw) {
   }
 
   return parsed.origin;
+}
+
+function isLoopbackOrigin(origin) {
+  try {
+    const { hostname, port } = new URL(origin);
+    return port === '8787' && (hostname === 'localhost' || hostname === '127.0.0.1');
+  } catch {
+    return false;
+  }
 }
 
 function toHostPattern(origin) {
@@ -44,6 +55,20 @@ async function ensureHostPermission(origin) {
 async function getSavedOrigin() {
   const result = await chrome.storage.sync.get(STORAGE_KEY);
   return result[STORAGE_KEY] || '';
+}
+
+async function getPreferredOrigin() {
+  const saved = await getSavedOrigin();
+  if (!saved) {
+    return DEFAULT_SERVER_ORIGIN;
+  }
+
+  try {
+    const normalized = normalizeServerUrl(saved);
+    return isLoopbackOrigin(normalized) ? normalized : DEFAULT_SERVER_ORIGIN;
+  } catch {
+    return DEFAULT_SERVER_ORIGIN;
+  }
 }
 
 async function saveOrigin() {
@@ -77,6 +102,25 @@ async function loadLatest(origin) {
 
   console.log('[popup] refresh fetch end', { filesCount: json.files.length });
   return json.files;
+}
+
+async function loadLatestWithLoopbackFallback(origin) {
+  try {
+    return {
+      origin,
+      files: await loadLatest(origin),
+    };
+  } catch (error) {
+    if (origin !== DEFAULT_SERVER_ORIGIN) {
+      throw error;
+    }
+
+    await ensureHostPermission(LOOPBACK_FALLBACK_ORIGIN);
+    return {
+      origin: LOOPBACK_FALLBACK_ORIGIN,
+      files: await loadLatest(LOOPBACK_FALLBACK_ORIGIN),
+    };
+  }
 }
 
 function buildImageUrl(origin, file) {
@@ -221,11 +265,13 @@ function makeCard(origin, file) {
 async function refresh() {
   gridEl.textContent = '';
   try {
-    const origin = normalizeServerUrl((await getSavedOrigin()) || serverInput.value || '');
+    const origin = normalizeServerUrl(serverInput.value || await getPreferredOrigin());
     await ensureHostPermission(origin);
 
     setStatus('Loading...', 'muted');
-    const files = await loadLatest(origin);
+    const result = await loadLatestWithLoopbackFallback(origin);
+    const files = result.files;
+    const imageOrigin = result.origin;
 
     if (files.length === 0) {
       console.log('[popup] rendering count computed', { apiFilesCount: 0, renderedCount: 0 });
@@ -236,7 +282,7 @@ async function refresh() {
     const fragment = document.createDocumentFragment();
     for (const file of files) {
       try {
-        fragment.appendChild(makeCard(origin, file));
+        fragment.appendChild(makeCard(imageOrigin, file));
       } catch (error) {
         console.error('[popup] skipping malformed file', { file, error });
       }
@@ -264,10 +310,7 @@ async function refresh() {
 async function init() {
   console.log('[popup] popup loaded');
 
-  const saved = await getSavedOrigin();
-  if (saved) {
-    serverInput.value = saved;
-  }
+  serverInput.value = await getPreferredOrigin();
 
   // Popup auto-refreshes on open so users immediately see latest images.
   await refresh();

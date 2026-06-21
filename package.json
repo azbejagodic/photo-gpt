@@ -3,10 +3,11 @@
   "version": "1.0.0",
   "description": "Local home LAN photo bridge between phone and ChatGPT",
   "type": "module",
-  "main": "server.js",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node server.js",
-    "desktop": "electron electron/main.js"
+    "desktop": "electron electron/main.js",
+    "dist": "electron-builder --win"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -14,6 +15,56 @@
     "multer": "^1.4.5-lts.1"
   },
   "devDependencies": {
-    "electron": "^31.7.7"
+    "electron": "^31.7.7",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "local.photogpt.app",
+    "productName": "Photo GPT",
+    "asar": false,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "server.js",
+      "electron/**/*",
+      "desktop/**/*",
+      "pwa/**/*",
+      "extension/**/*",
+      "package.json",
+      "!data/**/*",
+      "!dist/**/*",
+      "!node_modules/.cache/**/*",
+      "!**/*.log"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Photo GPT",
+      "include": "build/installer.nsh",
+      "artifactName": "${productName} Setup ${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable-${arch}.${ext}"
+    }
   }
 }

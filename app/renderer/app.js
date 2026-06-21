@@ -22,6 +22,11 @@ const GF_LOG = [];
 
 let currentPhoneUrl = '';
 const launchParams = new URLSearchParams(window.location.search);
+const SERVER_ORIGIN = 'http://localhost:8787';
+
+function serverUrl(resourcePath) {
+  return new URL(resourcePath, SERVER_ORIGIN).toString();
+}
 
 function initGaloisTables() {
   let value = 1;
@@ -458,7 +463,7 @@ function getLauncherStatus() {
   if (serverMode === 'reused') {
     return 'Electron reused an existing server';
   }
-  return 'Browser or unknown launcher';
+  return 'Unknown launcher';
 }
 
 function renderDiagnostics(data) {
@@ -515,7 +520,8 @@ function renderPhotos(files) {
     const thumbWrap = document.createElement('div');
     thumbWrap.className = 'thumb-wrap';
     const image = document.createElement('img');
-    image.src = file.url;
+    const imageUrl = serverUrl(file.url);
+    image.src = imageUrl;
     image.alt = file.name;
     image.loading = 'lazy';
     thumbWrap.appendChild(image);
@@ -540,14 +546,31 @@ function renderPhotos(files) {
     openButton.type = 'button';
     openButton.textContent = 'Open';
     openButton.addEventListener('click', () => {
-      window.open(file.url, '_blank', 'noopener');
+      window.open(imageUrl, '_blank', 'noopener');
     });
 
     const downloadLink = document.createElement('a');
     downloadLink.className = 'button secondary';
-    downloadLink.href = file.url;
+    downloadLink.href = imageUrl;
     downloadLink.download = file.name;
     downloadLink.textContent = 'Download';
+    downloadLink.addEventListener('click', async (event) => {
+      event.preventDefault();
+      try {
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+          throw new Error(`Download failed (${response.status})`);
+        }
+        const objectUrl = URL.createObjectURL(await response.blob());
+        const link = document.createElement('a');
+        link.href = objectUrl;
+        link.download = file.name;
+        link.click();
+        URL.revokeObjectURL(objectUrl);
+      } catch (_error) {
+        window.open(imageUrl, '_blank', 'noopener');
+      }
+    });
 
     actions.append(openButton, downloadLink);
     body.append(name, meta, actions);
@@ -556,19 +579,19 @@ function renderPhotos(files) {
   });
 }
 
-function getDashboardFiles(files) {
+function getAppFiles(files) {
   return files.filter((file) => file.name && !file.name.startsWith('.'));
 }
 
 async function loadPhoneSetup() {
   try {
-    const response = await fetch('/api/phone-url');
+    const response = await fetch(serverUrl('/api/phone-url'));
     if (!response.ok) {
       throw new Error(`Phone URL request failed (${response.status})`);
     }
     renderPhoneSetup(await response.json());
   } catch (error) {
-    renderPhoneSetup({ primaryUrl: window.location.origin, urls: [{ url: window.location.origin }] });
+    renderPhoneSetup({ primaryUrl: SERVER_ORIGIN, urls: [{ url: SERVER_ORIGIN }] });
     setupStatus.textContent = error.message || 'Using this browser address as a fallback.';
     setupStatus.className = 'status error';
   }
@@ -576,7 +599,7 @@ async function loadPhoneSetup() {
 
 async function loadDiagnostics() {
   try {
-    const response = await fetch('/api/server-status');
+    const response = await fetch(serverUrl('/api/server-status'));
     if (!response.ok) {
       throw new Error(`Server status request failed (${response.status})`);
     }
@@ -585,7 +608,7 @@ async function loadDiagnostics() {
     diagnosticsList.innerHTML = '';
     diagnosticsSummary.textContent = error.message || 'Could not load server diagnostics.';
     diagnosticsWarning.hidden = false;
-    diagnosticsWarning.textContent = 'Check that the local server is running and reload the dashboard.';
+    diagnosticsWarning.textContent = 'Check that the local server is running and reload the App.';
   }
 }
 
@@ -594,12 +617,12 @@ async function loadPhotos() {
   photoSummary.textContent = 'Refreshing...';
 
   try {
-    const response = await fetch('/api/latest');
+    const response = await fetch(serverUrl('/api/latest'));
     if (!response.ok) {
       throw new Error(`Photo request failed (${response.status})`);
     }
     const data = await response.json();
-    renderPhotos(getDashboardFiles(Array.isArray(data.files) ? data.files : []));
+    renderPhotos(getAppFiles(Array.isArray(data.files) ? data.files : []));
   } catch (error) {
     photoGrid.innerHTML = '';
     emptyState.hidden = false;

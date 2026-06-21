@@ -3,10 +3,12 @@
   "version": "1.0.0",
   "description": "Local home LAN photo bridge between phone and ChatGPT",
   "type": "module",
-  "main": "electron/main.js",
+  "main": "app/main.js",
   "scripts": {
-    "start": "node server.js",
-    "desktop": "electron electron/main.js",
+    "start": "electron app/main.js",
+    "server": "node app/server/index.js",
+    "desktop": "electron app/main.js",
+    "app": "electron app/main.js",
     "dist": "electron-builder --win"
   },
   "dependencies": {
@@ -26,9 +28,7 @@
       "output": "dist"
     },
     "files": [
-      "server.js",
-      "electron/**/*",
-      "desktop/**/*",
+      "app/**/*",
       "pwa/**/*",
       "extension/**/*",
       "package.json",

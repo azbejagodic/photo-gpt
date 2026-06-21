@@ -8,11 +8,12 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.join(__dirname, '..');
-const serverPath = path.join(projectRoot, 'server.js');
+const serverPath = path.join(__dirname, 'server', 'index.js');
+const rendererPath = path.join(__dirname, 'renderer', 'index.html');
 
 const PORT = 8787;
 const SERVER_ORIGIN = `http://localhost:${PORT}`;
-const DASHBOARD_URL = `${SERVER_ORIGIN}/desktop`;
+const SERVER_STATUS_URL = `${SERVER_ORIGIN}/api/server-status`;
 
 electronApp.setName('Photo GPT');
 
@@ -24,27 +25,6 @@ const delay = (ms) => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
 
-const isDashboardReachable = (url) => new Promise((resolve) => {
-  let settled = false;
-  const done = (value) => {
-    if (!settled) {
-      settled = true;
-      resolve(value);
-    }
-  };
-
-  const req = http.get(url, (res) => {
-    res.resume();
-    done(res.statusCode >= 200 && res.statusCode < 400);
-  });
-
-  req.on('error', () => done(false));
-  req.setTimeout(1000, () => {
-    req.destroy();
-    done(false);
-  });
-});
-
 const getJson = (url) => new Promise((resolve, reject) => {
   const req = http.get(url, (res) => {
     let body = '';
@@ -53,6 +33,11 @@ const getJson = (url) => new Promise((resolve, reject) => {
       body += chunk;
     });
     res.on('end', () => {
+      if (res.statusCode < 200 || res.statusCode >= 400) {
+        reject(new Error(`Request failed (${res.statusCode}) for ${url}`));
+        return;
+      }
+
       try {
         resolve(JSON.parse(body));
       } catch (err) {
@@ -67,6 +52,15 @@ const getJson = (url) => new Promise((resolve, reject) => {
   });
 });
 
+const getServerStatus = async () => {
+  try {
+    const status = await getJson(SERVER_STATUS_URL);
+    return status?.status === 'listening' ? status : null;
+  } catch (_err) {
+    return null;
+  }
+};
+
 const getStartupLogPath = () => path.join(electronApp.getPath('userData'), 'startup.log');
 
 const writeStartupLog = async (event, details = {}) => {
@@ -74,7 +68,8 @@ const writeStartupLog = async (event, details = {}) => {
   const record = {
     time: new Date().toISOString(),
     event,
-    dashboardUrl: DASHBOARD_URL,
+    serverOrigin: SERVER_ORIGIN,
+    rendererPath,
     ...details,
   };
 
@@ -83,23 +78,37 @@ const writeStartupLog = async (event, details = {}) => {
   await fs.appendFile(logPath, `${JSON.stringify(record)}\n`);
 };
 
-const waitForDashboard = async () => {
+const waitForServer = async () => {
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (await isDashboardReachable(DASHBOARD_URL)) {
-      return true;
+    const status = await getServerStatus();
+    if (status) {
+      return status;
     }
     await delay(100);
   }
 
-  return false;
+  return null;
+};
+
+const cleanupOwnedServer = () => {
+  if (!ownedServerProcess) {
+    return;
+  }
+
+  const serverProcess = ownedServerProcess;
+  ownedServerProcess = null;
+
+  if (!serverProcess.killed) {
+    serverProcess.kill();
+  }
 };
 
 const ensureServer = async () => {
-  if (await isDashboardReachable(DASHBOARD_URL)) {
+  const existingStatus = await getServerStatus();
+  if (existingStatus) {
     serverLaunchMode = 'reused';
-    const status = await getJson(`${SERVER_ORIGIN}/api/server-status`).catch((err) => ({ statusError: err.message }));
     await writeStartupLog('server-reused', {
-      serverStatus: status,
+      serverStatus: existingStatus,
       logFile: getStartupLogPath(),
     });
     return;
@@ -146,14 +155,13 @@ const ensureServer = async () => {
     }
   });
 
-  const ready = await waitForDashboard();
-  if (!ready) {
+  const status = await waitForServer();
+  if (!status) {
     cleanupOwnedServer();
-    throw new Error(`The local dashboard did not become ready at ${DASHBOARD_URL}.`);
+    throw new Error(`The local server did not become ready at ${SERVER_STATUS_URL}.`);
   }
 
   serverLaunchMode = 'started';
-  const status = await getJson(`${SERVER_ORIGIN}/api/server-status`).catch((err) => ({ statusError: err.message }));
   await writeStartupLog('server-started', {
     serverStatus: status,
     logFile: logPath,
@@ -214,23 +222,12 @@ const createWindow = async () => {
     mainWindow = null;
   });
 
-  const url = new URL(DASHBOARD_URL);
-  url.searchParams.set('launcher', 'electron');
-  url.searchParams.set('server', serverLaunchMode);
-  await mainWindow.loadURL(url.toString());
-};
-
-const cleanupOwnedServer = () => {
-  if (!ownedServerProcess) {
-    return;
-  }
-
-  const serverProcess = ownedServerProcess;
-  ownedServerProcess = null;
-
-  if (!serverProcess.killed) {
-    serverProcess.kill();
-  }
+  await mainWindow.loadFile(rendererPath, {
+    query: {
+      launcher: 'electron',
+      server: serverLaunchMode,
+    },
+  });
 };
 
 const gotLock = electronApp.requestSingleInstanceLock();

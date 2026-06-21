@@ -8,62 +8,151 @@
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <p class="eyebrow">LAN photo bridge</p>
-      <h1>Photo GPT</h1>
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="app-mark" aria-hidden="true">
+          <span></span>
+        </div>
+        <div>
+          <p class="eyebrow">Photo GPT Bridge</p>
+          <h1>Your local photo workspace</h1>
+          <p class="header-description">Move photos from your phone to ChatGPT over your private network.</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <span class="privacy-badge"><span class="status-dot"></span>Local network only</span>
+        <button id="refreshBtn" class="button primary" type="button">Refresh photos</button>
+      </div>
     </div>
-    <button id="refreshBtn" class="button primary" type="button">Refresh</button>
   </header>
 
   <main class="layout">
-    <section class="setup-section" aria-labelledby="setupTitle">
-      <div class="setup-copy">
-        <p class="eyebrow">Phone setup</p>
-        <h2 id="setupTitle">Upload from your phone</h2>
-        <label for="phoneUrl">Phone upload URL</label>
-        <div class="url-row">
-          <input id="phoneUrl" type="text" readonly />
-          <button id="copyPhoneUrlBtn" class="button secondary" type="button">Copy Phone URL</button>
+    <section class="card workflow-section" aria-labelledby="workflowTitle">
+      <div class="section-head workflow-head">
+        <div>
+          <p class="eyebrow">How it works</p>
+          <h2 id="workflowTitle">From phone to ChatGPT in five steps</h2>
         </div>
+        <p class="section-description">Everything stays on your local network.</p>
+      </div>
+
+      <ol class="workflow-list">
+        <li class="workflow-item">
+          <span class="step-number">1</span>
+          <span class="step-copy">
+            <strong>Use the same Wi-Fi</strong>
+            <span>Connect your phone and this PC to one network.</span>
+          </span>
+        </li>
+        <li class="workflow-item">
+          <span class="step-number">2</span>
+          <span class="step-copy">
+            <strong>Open the phone uploader</strong>
+            <span>Scan the QR code or open the LAN URL below.</span>
+          </span>
+        </li>
+        <li class="workflow-item">
+          <span class="step-number">3</span>
+          <span class="step-copy">
+            <strong>Upload your photos</strong>
+            <span>Take new photos or choose them from your phone.</span>
+          </span>
+        </li>
+        <li class="workflow-item">
+          <span class="step-number">4</span>
+          <span class="step-copy">
+            <strong>Open the extension</strong>
+            <span>Use Photo GPT from Chrome or Brave on this PC.</span>
+          </span>
+        </li>
+        <li class="workflow-item">
+          <span class="step-number">5</span>
+          <span class="step-copy">
+            <strong>Copy and paste</strong>
+            <span>Copy an image, then paste it directly into ChatGPT.</span>
+          </span>
+        </li>
+      </ol>
+    </section>
+
+    <section class="card setup-section" aria-labelledby="setupTitle">
+      <div class="setup-copy">
+        <div>
+          <p class="eyebrow">Phone connection</p>
+          <h2 id="setupTitle">Open the uploader on your phone</h2>
+          <p class="section-description setup-description">Scan the code with your phone camera, or type the address into Safari or Chrome.</p>
+        </div>
+
+        <div class="network-note">
+          <span class="network-icon" aria-hidden="true"></span>
+          <span><strong>Same Wi-Fi required</strong>Your phone must be connected to the same network as this PC.</span>
+        </div>
+
+        <div class="url-field">
+          <label for="phoneUrl">Phone upload URL</label>
+          <div class="url-row">
+            <input id="phoneUrl" type="text" readonly />
+            <button id="copyPhoneUrlBtn" class="button secondary" type="button">Copy URL</button>
+          </div>
+        </div>
+
         <p id="setupStatus" class="status" aria-live="polite"></p>
         <div id="alternateUrls" class="alternate-urls" hidden></div>
       </div>
 
-      <div class="qr-box">
-        <canvas id="phoneQr" aria-label="QR code for phone upload URL"></canvas>
-        <p id="qrFallback" class="status"></p>
-      </div>
-    </section>
-
-    <section class="diagnostics-section" aria-labelledby="diagnosticsTitle">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">LAN troubleshooting</p>
-          <h2 id="diagnosticsTitle">Server diagnostics</h2>
+      <div class="qr-panel">
+        <div class="qr-panel-head">
+          <p class="eyebrow">Quick connect</p>
+          <h3>Scan with your phone</h3>
         </div>
-        <p id="diagnosticsSummary" class="summary" aria-live="polite">Checking server...</p>
+        <div class="qr-box">
+          <canvas id="phoneQr" aria-label="QR code for phone upload URL"></canvas>
+          <p id="qrFallback" class="status"></p>
+        </div>
+        <p class="qr-caption">Your phone uploader opens in the browser. No cloud account is needed.</p>
       </div>
-      <dl id="diagnosticsList" class="diagnostics-list"></dl>
-      <div id="diagnosticsWarning" class="diagnostics-warning" hidden></div>
-      <div id="diagnosticsUrls" class="alternate-urls" hidden></div>
     </section>
 
-    <section class="photos-section" aria-labelledby="photosTitle">
+    <section class="card photos-section" aria-labelledby="photosTitle">
       <div class="section-head">
         <div>
           <p class="eyebrow">Latest batch</p>
-          <h2 id="photosTitle">Uploaded photos</h2>
+          <h2 id="photosTitle">Latest uploaded photos</h2>
+          <p class="section-description">Open or download the current batch from your phone.</p>
         </div>
-        <p id="photoSummary" class="summary" aria-live="polite">Loading photos...</p>
+        <p id="photoSummary" class="summary count-badge" aria-live="polite">Loading photos...</p>
       </div>
 
       <div id="emptyState" class="empty-state" hidden>
-        <h3>No uploaded photos</h3>
-        <p>Use the phone upload page, then refresh the App.</p>
+        <div class="empty-illustration" aria-hidden="true"><span></span></div>
+        <div>
+          <h3>No photos yet</h3>
+          <p>Upload photos from your phone, then select <strong>Refresh photos</strong>.</p>
+        </div>
       </div>
 
       <div id="photoGrid" class="photo-grid"></div>
     </section>
+
+    <details id="diagnosticsPanel" class="card diagnostics-section">
+      <summary class="diagnostics-toggle">
+        <span class="diagnostics-heading">
+          <span class="eyebrow">Troubleshooting</span>
+          <span id="diagnosticsTitle" class="diagnostics-title">Connection diagnostics</span>
+        </span>
+        <span class="diagnostics-summary-wrap">
+          <span id="diagnosticsSummary" class="summary status-badge" aria-live="polite">Checking server...</span>
+          <span class="chevron" aria-hidden="true"></span>
+        </span>
+      </summary>
+
+      <div class="diagnostics-body">
+        <dl id="diagnosticsList" class="diagnostics-list"></dl>
+        <div id="diagnosticsWarning" class="diagnostics-note" hidden></div>
+        <div id="diagnosticsUrls" class="alternate-urls" hidden></div>
+      </div>
+    </details>
   </main>
 
   <script src="./app.js" defer></script>

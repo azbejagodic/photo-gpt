@@ -12,6 +12,7 @@ const diagnosticsSummary = document.getElementById('diagnosticsSummary');
 const diagnosticsList = document.getElementById('diagnosticsList');
 const diagnosticsWarning = document.getElementById('diagnosticsWarning');
 const diagnosticsUrls = document.getElementById('diagnosticsUrls');
+const diagnosticsPanel = document.getElementById('diagnosticsPanel');
 
 const QR_VERSION = 2;
 const QR_SIZE = 17 + QR_VERSION * 4;
@@ -19,8 +20,14 @@ const QR_DATA_CODEWORDS = 34;
 const QR_ECC_CODEWORDS = 10;
 const GF_EXP = [];
 const GF_LOG = [];
+const AUTO_REFRESH_MS = 5000;
 
 let currentPhoneUrl = '';
+let refreshInFlight = false;
+let manualRefreshQueued = false;
+let autoRefreshTimer = null;
+let latestFilesSignature = null;
+let hasLoadedPhotos = false;
 const launchParams = new URLSearchParams(window.location.search);
 const SERVER_ORIGIN = 'http://localhost:8787';
 
@@ -468,7 +475,9 @@ function getLauncherStatus() {
 
 function renderDiagnostics(data) {
   diagnosticsList.innerHTML = '';
-  diagnosticsSummary.textContent = data.status === 'listening' ? 'Server is listening.' : 'Server status is unknown.';
+  const isListening = data.status === 'listening';
+  diagnosticsSummary.textContent = isListening ? 'Server online' : 'Status unknown';
+  diagnosticsSummary.className = `summary status-badge ${isListening ? 'success' : 'error'}`;
 
   addDiagnosticRow('Server status', data.status || 'unknown');
   addDiagnosticRow('Launcher', getLauncherStatus());
@@ -484,9 +493,12 @@ function renderDiagnostics(data) {
 
   if (privateLanUrls.length === 0) {
     diagnosticsWarning.hidden = false;
+    diagnosticsWarning.className = 'diagnostics-note warning';
     diagnosticsWarning.textContent = 'No private LAN IPv4 address was detected. Make sure the PC is connected to the same Wi-Fi as the phone, the network profile is Private, and Windows Firewall allows Photo GPT on Private networks.';
+    diagnosticsPanel.open = true;
   } else {
     diagnosticsWarning.hidden = false;
+    diagnosticsWarning.className = 'diagnostics-note';
     diagnosticsWarning.textContent = 'Phone checklist: use the LAN URL above, keep phone and PC on the same Wi-Fi, set the PC network to Private, and allow Photo GPT through Windows Firewall on Private networks if Windows asks.';
   }
 }
@@ -494,8 +506,8 @@ function renderDiagnostics(data) {
 function renderPhoneSetup(data) {
   currentPhoneUrl = data.primaryUrl || window.location.origin;
   phoneUrlInput.value = currentPhoneUrl;
-  setupStatus.textContent = 'Use this address from Safari or Chrome on your phone while both devices are on the same Wi-Fi.';
-  setupStatus.className = 'status';
+  setupStatus.textContent = 'Ready to open from Safari or Chrome on your phone.';
+  setupStatus.className = 'status success';
   renderAlternateUrls(data.urls);
 
   try {
@@ -508,10 +520,17 @@ function renderPhoneSetup(data) {
   }
 }
 
+function updatePhotoSummary(files) {
+  const countLabel = files.length === 1 ? '1 photo' : `${files.length} photos`;
+  photoSummary.textContent = `${countLabel} · Auto-refresh on`;
+  photoSummary.className = 'summary count-badge';
+  photoSummary.removeAttribute('title');
+}
+
 function renderPhotos(files) {
   photoGrid.innerHTML = '';
   emptyState.hidden = files.length > 0;
-  photoSummary.textContent = files.length === 1 ? '1 photo' : `${files.length} photos`;
+  updatePhotoSummary(files);
 
   files.forEach((file) => {
     const card = document.createElement('article');
@@ -607,14 +626,38 @@ async function loadDiagnostics() {
   } catch (error) {
     diagnosticsList.innerHTML = '';
     diagnosticsSummary.textContent = error.message || 'Could not load server diagnostics.';
+    diagnosticsSummary.className = 'summary status-badge error';
     diagnosticsWarning.hidden = false;
+    diagnosticsWarning.className = 'diagnostics-note warning';
     diagnosticsWarning.textContent = 'Check that the local server is running and reload the App.';
+    diagnosticsPanel.open = true;
   }
 }
 
-async function loadPhotos() {
-  refreshBtn.disabled = true;
-  photoSummary.textContent = 'Refreshing...';
+function setManualRefreshBusy(isBusy) {
+  refreshBtn.disabled = isBusy;
+  refreshBtn.textContent = isBusy ? 'Refreshing...' : 'Refresh photos';
+}
+
+async function loadPhotos({ source = 'manual' } = {}) {
+  const showActivity = source === 'manual' || source === 'initial';
+
+  if (refreshInFlight) {
+    if (source === 'manual') {
+      manualRefreshQueued = true;
+      setManualRefreshBusy(true);
+    }
+    return;
+  }
+
+  refreshInFlight = true;
+  photoGrid.setAttribute('aria-busy', 'true');
+
+  if (showActivity) {
+    setManualRefreshBusy(true);
+    photoSummary.textContent = 'Refreshing...';
+    photoSummary.className = 'summary count-badge';
+  }
 
   try {
     const response = await fetch(serverUrl('/api/latest'));
@@ -622,19 +665,66 @@ async function loadPhotos() {
       throw new Error(`Photo request failed (${response.status})`);
     }
     const data = await response.json();
-    renderPhotos(getAppFiles(Array.isArray(data.files) ? data.files : []));
+    const files = getAppFiles(Array.isArray(data.files) ? data.files : []);
+    const filesSignature = JSON.stringify(files.map(({ name, size, url }) => ({ name, size, url })));
+
+    if (filesSignature !== latestFilesSignature) {
+      renderPhotos(files);
+      latestFilesSignature = filesSignature;
+    } else {
+      updatePhotoSummary(files);
+    }
+    hasLoadedPhotos = true;
   } catch (error) {
-    photoGrid.innerHTML = '';
-    emptyState.hidden = false;
-    photoSummary.textContent = error.message || 'Could not load photos.';
+    if (!hasLoadedPhotos) {
+      photoGrid.innerHTML = '';
+      emptyState.hidden = false;
+    }
+    photoSummary.textContent = 'Refresh failed · Retrying...';
+    photoSummary.className = 'summary count-badge error';
+    photoSummary.title = error.message || 'Could not load photos.';
   } finally {
-    refreshBtn.disabled = false;
+    refreshInFlight = false;
+    const runQueuedManualRefresh = manualRefreshQueued;
+    manualRefreshQueued = false;
+
+    if (runQueuedManualRefresh) {
+      await loadPhotos({ source: 'manual' });
+    } else {
+      photoGrid.removeAttribute('aria-busy');
+      if (showActivity) {
+        setManualRefreshBusy(false);
+      }
+    }
   }
+}
+
+function runAutoRefresh() {
+  if (!document.hidden) {
+    loadPhotos({ source: 'auto' });
+  }
+}
+
+function startAutoRefresh() {
+  if (autoRefreshTimer !== null || document.hidden) {
+    return;
+  }
+  autoRefreshTimer = window.setInterval(runAutoRefresh, AUTO_REFRESH_MS);
+}
+
+function stopAutoRefresh() {
+  if (autoRefreshTimer === null) {
+    return;
+  }
+  window.clearInterval(autoRefreshTimer);
+  autoRefreshTimer = null;
 }
 
 initGaloisTables();
 
-refreshBtn.addEventListener('click', loadPhotos);
+refreshBtn.addEventListener('click', () => {
+  loadPhotos({ source: 'manual' });
+});
 copyPhoneUrlBtn.addEventListener('click', async () => {
   if (!currentPhoneUrl) {
     return;
@@ -643,13 +733,26 @@ copyPhoneUrlBtn.addEventListener('click', async () => {
   try {
     await copyText(currentPhoneUrl);
     setupStatus.textContent = 'Phone upload URL copied.';
-    setupStatus.className = 'status';
+    setupStatus.className = 'status success';
   } catch (_error) {
     setupStatus.textContent = 'Copy failed. Select the URL and copy it manually.';
     setupStatus.className = 'status error';
   }
 });
 
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopAutoRefresh();
+    return;
+  }
+
+  loadPhotos({ source: 'auto' });
+  startAutoRefresh();
+});
+
+window.addEventListener('pagehide', stopAutoRefresh);
+
 loadPhoneSetup();
 loadDiagnostics();
-loadPhotos();
+loadPhotos({ source: 'initial' });
+startAutoRefresh();

@@ -179,12 +179,12 @@ const isLocalAppUrl = (targetUrl) => {
 
 const createWindow = async () => {
   mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 800,
-    minWidth: 900,
-    minHeight: 650,
+    width: 960,
+    height: 600,
+    minWidth: 860,
+    minHeight: 540,
     title: 'Photo GPT',
-    backgroundColor: '#f4f6f8',
+    backgroundColor: '#343940',
     autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,

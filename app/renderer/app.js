@@ -1,4 +1,14 @@
 const refreshBtn = document.getElementById('refreshBtn');
+const qrBtn = document.getElementById('qrBtn');
+const connectionPill = document.getElementById('connectionPill');
+const serverStatusBadge = document.getElementById('serverStatusBadge');
+const serverStateLabel = document.getElementById('serverStateLabel');
+const serverLanAddress = document.getElementById('serverLanAddress');
+const serverPort = document.getElementById('serverPort');
+const serverUploadUrl = document.getElementById('serverUploadUrl');
+const serverLastChecked = document.getElementById('serverLastChecked');
+const serverPhotoCount = document.getElementById('serverPhotoCount');
+const serverMessage = document.getElementById('serverMessage');
 const phoneUrlInput = document.getElementById('phoneUrl');
 const copyPhoneUrlBtn = document.getElementById('copyPhoneUrlBtn');
 const setupStatus = document.getElementById('setupStatus');
@@ -7,12 +17,24 @@ const phoneQr = document.getElementById('phoneQr');
 const qrFallback = document.getElementById('qrFallback');
 const photoSummary = document.getElementById('photoSummary');
 const emptyState = document.getElementById('emptyState');
+const emptyStateTitle = document.getElementById('emptyStateTitle');
+const emptyStateText = document.getElementById('emptyStateText');
 const photoGrid = document.getElementById('photoGrid');
+const picturePagination = document.getElementById('picturePagination');
+const prevPicturesPage = document.getElementById('prevPicturesPage');
+const nextPicturesPage = document.getElementById('nextPicturesPage');
+const picturesPageLabel = document.getElementById('picturesPageLabel');
+const downloadAllBtn = document.getElementById('downloadAllBtn');
+const picturesMessage = document.getElementById('picturesMessage');
+const gridViewBtn = document.getElementById('gridViewBtn');
+const listViewBtn = document.getElementById('listViewBtn');
 const diagnosticsSummary = document.getElementById('diagnosticsSummary');
 const diagnosticsList = document.getElementById('diagnosticsList');
 const diagnosticsWarning = document.getElementById('diagnosticsWarning');
 const diagnosticsUrls = document.getElementById('diagnosticsUrls');
 const diagnosticsPanel = document.getElementById('diagnosticsPanel');
+const qrModal = document.getElementById('qrModal');
+const closeQrBtn = document.getElementById('closeQrBtn');
 
 const QR_VERSION = 2;
 const QR_SIZE = 17 + QR_VERSION * 4;
@@ -21,13 +43,20 @@ const QR_ECC_CODEWORDS = 10;
 const GF_EXP = [];
 const GF_LOG = [];
 const AUTO_REFRESH_MS = 5000;
+const GRID_PAGE_SIZE = 6;
+const LIST_PAGE_SIZE = 10;
+const PICTURES_VIEW_KEY = 'photoGptPicturesView';
 
 let currentPhoneUrl = '';
-let refreshInFlight = false;
-let manualRefreshQueued = false;
+let dashboardRefreshInFlight = false;
+let latestPicturesRefreshPromise = null;
 let autoRefreshTimer = null;
-let latestFilesSignature = null;
 let hasLoadedPhotos = false;
+let latestFiles = [];
+let currentPicturesPage = 0;
+let picturesView = localStorage.getItem(PICTURES_VIEW_KEY) === 'list' ? 'list' : 'grid';
+let lastServerStatusData = null;
+let statusLastCheckedAt = null;
 const launchParams = new URLSearchParams(window.location.search);
 const SERVER_ORIGIN = 'http://localhost:8787';
 
@@ -383,6 +412,43 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function formatClockTime(date) {
+  if (!(date instanceof Date)) {
+    return '—';
+  }
+
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function parseUrl(value) {
+  try {
+    return new URL(value);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function isLocalHostname(hostname) {
+  return ['localhost', '127.0.0.1', '::1'].includes(hostname);
+}
+
+function isUsablePhoneUrl(value) {
+  const parsed = parseUrl(value);
+  return Boolean(parsed && !isLocalHostname(parsed.hostname));
+}
+
+function choosePhoneUrl(data) {
+  const urls = Array.isArray(data?.urls) ? data.urls : [];
+  const privateUrl = urls.find((item) => item.private && isUsablePhoneUrl(item.url));
+  const nonLocalUrl = urls.find((item) => isUsablePhoneUrl(item.url));
+  const primaryUrl = isUsablePhoneUrl(data?.primaryUrl) ? { url: data.primaryUrl } : null;
+  return privateUrl || nonLocalUrl || primaryUrl || null;
+}
+
 async function copyText(text) {
   if (navigator.clipboard && window.isSecureContext) {
     await navigator.clipboard.writeText(text);
@@ -400,8 +466,145 @@ async function copyText(text) {
   textarea.remove();
 }
 
+async function copyImage(imageUrl) {
+  if (!navigator.clipboard || !window.ClipboardItem) {
+    await copyText(imageUrl);
+    return;
+  }
+
+  try {
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      throw new Error(`Copy failed (${response.status})`);
+    }
+
+    const blob = await response.blob();
+    const type = blob.type || 'image/png';
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        [type]: blob,
+      }),
+    ]);
+  } catch (_error) {
+    await copyText(imageUrl);
+  }
+}
+
+async function downloadImage(file, imageUrl) {
+  try {
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      throw new Error(`Download failed (${response.status})`);
+    }
+
+    const objectUrl = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = file.name || 'photo';
+    link.click();
+    URL.revokeObjectURL(objectUrl);
+  } catch (_error) {
+    window.open(imageUrl, '_blank', 'noopener');
+  }
+}
+
+async function downloadAllPictures() {
+  if (!latestFiles.length) {
+    return;
+  }
+
+  picturesMessage.hidden = true;
+  downloadAllBtn.disabled = true;
+  downloadAllBtn.textContent = 'Downloading...';
+
+  try {
+    const response = await fetch(serverUrl('/api/latest/download'));
+    if (!response.ok) {
+      throw new Error(`Download failed (${response.status})`);
+    }
+
+    const objectUrl = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = 'photo-gpt-latest.zip';
+    link.click();
+    URL.revokeObjectURL(objectUrl);
+  } catch (error) {
+    picturesMessage.textContent = error.message || 'Could not download all pictures.';
+    picturesMessage.hidden = false;
+  } finally {
+    downloadAllBtn.disabled = false;
+    downloadAllBtn.textContent = 'Download all';
+  }
+}
+
+function setBadge(element, baseClass, state, label, labelElement = null) {
+  if (!element) {
+    return;
+  }
+  element.className = `${baseClass} ${state}`;
+  const target = labelElement || element.querySelector('span:last-child') || element;
+  target.textContent = label;
+}
+
+function renderConnectionState(state, label) {
+  setBadge(connectionPill, 'server-line', state, label);
+}
+
+function renderStatus({ state, message } = {}) {
+  const statusState = state || (
+    lastServerStatusData?.status === 'listening' ? 'online' : 'checking'
+  );
+  const statusLabel = statusState === 'online' ? 'Online' : statusState === 'offline' ? 'Offline' : 'Checking';
+
+  setBadge(serverStatusBadge, 'status-badge', statusState, statusLabel, serverStateLabel);
+  const connectionLabel = statusState === 'online'
+    ? 'Server online'
+    : statusState === 'offline'
+      ? 'Server offline'
+      : 'Checking server';
+  renderConnectionState(statusState, connectionLabel);
+
+  if (message) {
+    if (serverMessage) {
+      serverMessage.textContent = message;
+      serverMessage.className = `status-text ${statusState === 'offline' ? 'error' : ''}`.trim();
+    }
+    return;
+  }
+
+  if (statusState === 'online' && currentPhoneUrl) {
+    if (serverMessage) {
+      serverMessage.textContent = 'Ready for phone uploads on your local network.';
+      serverMessage.className = 'status-text success';
+    }
+    return;
+  }
+
+  if (statusState === 'online') {
+    if (serverMessage) {
+      serverMessage.textContent = 'Server is running, but no phone LAN URL was detected.';
+      serverMessage.className = 'status-text error';
+    }
+    return;
+  }
+
+  if (serverMessage) {
+    serverMessage.textContent = 'The local server is not responding yet.';
+    serverMessage.className = 'status-text error';
+  }
+}
+
 function renderAlternateUrls(urls) {
-  if (!Array.isArray(urls) || urls.length <= 1) {
+  if (!alternateUrls) {
+    return;
+  }
+
+  const visibleUrls = Array.isArray(urls)
+    ? urls.filter((item) => isUsablePhoneUrl(item.url))
+    : [];
+
+  if (visibleUrls.length <= 1) {
     alternateUrls.hidden = true;
     alternateUrls.innerHTML = '';
     return;
@@ -413,11 +616,11 @@ function renderAlternateUrls(urls) {
   title.textContent = 'Other detected LAN URLs';
   const list = document.createElement('ul');
 
-  urls.forEach((item) => {
+  visibleUrls.forEach((item) => {
     const listItem = document.createElement('li');
     const link = document.createElement('a');
     link.href = item.url;
-    link.textContent = item.url;
+    link.textContent = item.private ? `${item.url} (private LAN)` : item.url;
     link.target = '_blank';
     link.rel = 'noopener';
     listItem.appendChild(link);
@@ -476,15 +679,14 @@ function getLauncherStatus() {
 function renderDiagnostics(data) {
   diagnosticsList.innerHTML = '';
   const isListening = data.status === 'listening';
-  diagnosticsSummary.textContent = isListening ? 'Server online' : 'Status unknown';
-  diagnosticsSummary.className = `summary status-badge ${isListening ? 'success' : 'error'}`;
+  setBadge(diagnosticsSummary, 'summary status-badge', isListening ? 'online' : 'offline', isListening ? 'Server online' : 'Status unknown');
 
   addDiagnosticRow('Server status', data.status || 'unknown');
   addDiagnosticRow('Launcher', getLauncherStatus());
   addDiagnosticRow('Server source', data.launchSource || 'unknown');
   addDiagnosticRow('Bind host', data.bindHost || data.configuredHost || 'unknown');
   addDiagnosticRow('Port', String(data.port || 'unknown'));
-  addDiagnosticRow('Primary phone URL', data.primaryLanUrl || 'No LAN URL detected');
+  addDiagnosticRow('Primary phone URL', currentPhoneUrl || data.primaryLanUrl || 'No LAN URL detected');
   addDiagnosticRow('Runtime data', data.runtimeDataDir || 'unknown');
   addDiagnosticRow('Upload staging', data.uploadTempDir || 'unknown');
 
@@ -503,97 +705,237 @@ function renderDiagnostics(data) {
   }
 }
 
-function renderPhoneSetup(data) {
-  currentPhoneUrl = data.primaryUrl || window.location.origin;
-  phoneUrlInput.value = currentPhoneUrl;
-  setupStatus.textContent = 'Ready to open from Safari or Chrome on your phone.';
-  setupStatus.className = 'status success';
-  renderAlternateUrls(data.urls);
+function renderDiagnosticsError(error) {
+  diagnosticsList.innerHTML = '';
+  setBadge(diagnosticsSummary, 'summary status-badge', 'offline', 'Server offline');
+  diagnosticsWarning.hidden = false;
+  diagnosticsWarning.className = 'diagnostics-note warning';
+  diagnosticsWarning.textContent = error.message || 'Check that the local server is running and reload the App.';
+  diagnosticsPanel.open = true;
+}
+
+function renderQrCode(phoneUrl) {
+  if (!phoneUrl) {
+    phoneQr.hidden = true;
+    qrFallback.textContent = '';
+    qrFallback.className = 'status-text';
+    return;
+  }
 
   try {
-    drawQrCode(phoneQr, currentPhoneUrl);
+    drawQrCode(phoneQr, phoneUrl);
     qrFallback.textContent = '';
+    qrFallback.className = 'status-text';
     phoneQr.hidden = false;
-  } catch (error) {
+  } catch (_error) {
     phoneQr.hidden = true;
-    qrFallback.textContent = error.message || 'QR code could not be generated.';
+    qrFallback.textContent = '';
+    qrFallback.className = 'status-text';
   }
 }
 
+function renderPhoneSetup(data) {
+  const selectedPhoneUrl = choosePhoneUrl(data);
+  currentPhoneUrl = selectedPhoneUrl?.url || '';
+  phoneUrlInput.textContent = currentPhoneUrl || '';
+  phoneUrlInput.title = currentPhoneUrl;
+  if (copyPhoneUrlBtn) {
+    copyPhoneUrlBtn.disabled = !currentPhoneUrl;
+  }
+
+  if (setupStatus && currentPhoneUrl) {
+    setupStatus.textContent = 'Ready to scan or open from your phone.';
+    setupStatus.className = 'status-text success';
+  } else if (setupStatus) {
+    setupStatus.textContent = 'No LAN address was detected. Check Wi-Fi and firewall settings.';
+    setupStatus.className = 'status-text error';
+  }
+
+  renderAlternateUrls(data?.urls);
+  renderQrCode(currentPhoneUrl);
+  renderStatus();
+}
+
+function openQrModal() {
+  if (!qrModal) {
+    return;
+  }
+
+  renderQrCode(currentPhoneUrl);
+  qrModal.hidden = false;
+  closeQrBtn?.focus();
+}
+
+function closeQrModal() {
+  if (!qrModal) {
+    return;
+  }
+
+  qrModal.hidden = true;
+  qrBtn?.focus();
+}
+
 function updatePhotoSummary(files) {
-  const countLabel = files.length === 1 ? '1 photo' : `${files.length} photos`;
-  photoSummary.textContent = `${countLabel} · Auto-refresh on`;
-  photoSummary.className = 'summary count-badge';
+  if (!photoSummary) {
+    return;
+  }
+
+  const countLabel = files.length === 1 ? '1 picture' : `${files.length} pictures`;
+  photoSummary.textContent = `${countLabel} · auto-refresh on`;
+  photoSummary.className = 'summary';
   photoSummary.removeAttribute('title');
 }
 
-function renderPhotos(files) {
-  photoGrid.innerHTML = '';
-  emptyState.hidden = files.length > 0;
-  updatePhotoSummary(files);
+function renderEmptyState(title, text, state = 'empty') {
+  emptyStateTitle.textContent = title;
+  if (emptyStateText) {
+    emptyStateText.textContent = text;
+  }
+  emptyState.className = `empty-state ${state}`;
+  emptyState.hidden = false;
+}
 
-  files.forEach((file) => {
+function getPicturesPageSize() {
+  return picturesView === 'list' ? LIST_PAGE_SIZE : GRID_PAGE_SIZE;
+}
+
+function getFileType(file) {
+  const extension = file.name?.split('.').pop()?.trim();
+  return extension ? extension.toUpperCase() : 'IMAGE';
+}
+
+function getPictureKey(file) {
+  return file?.url || file?.name || '';
+}
+
+function arePictureListsEqual(previousFiles, nextFiles) {
+  if (previousFiles.length !== nextFiles.length) {
+    return false;
+  }
+
+  return previousFiles.every((previousFile, index) => {
+    const nextFile = nextFiles[index];
+    return getPictureKey(previousFile) === getPictureKey(nextFile)
+      && previousFile.size === nextFile.size;
+  });
+}
+
+function updateViewToggle() {
+  gridViewBtn.classList.toggle('active', picturesView === 'grid');
+  listViewBtn.classList.toggle('active', picturesView === 'list');
+  gridViewBtn.setAttribute('aria-pressed', String(picturesView === 'grid'));
+  listViewBtn.setAttribute('aria-pressed', String(picturesView === 'list'));
+}
+
+function createPictureActions(file, imageUrl, variant = '') {
+  const actions = document.createElement('div');
+  actions.className = variant ? `photo-actions ${variant}` : 'photo-actions';
+
+  const copyButton = document.createElement('button');
+  copyButton.className = 'photo-action';
+  copyButton.type = 'button';
+  copyButton.textContent = 'Copy';
+  copyButton.addEventListener('click', async () => {
+    copyButton.disabled = true;
+    try {
+      await copyImage(imageUrl);
+    } finally {
+      copyButton.disabled = false;
+    }
+  });
+
+  const downloadButton = document.createElement('button');
+  downloadButton.className = 'photo-action';
+  downloadButton.type = 'button';
+  downloadButton.textContent = 'Download';
+  downloadButton.addEventListener('click', () => {
+    downloadImage(file, imageUrl);
+  });
+
+  actions.append(copyButton, downloadButton);
+  return actions;
+}
+
+function updatePicturesPagination(totalPictures) {
+  const pageSize = getPicturesPageSize();
+  const totalPages = Math.max(1, Math.ceil(totalPictures / pageSize));
+  currentPicturesPage = Math.min(currentPicturesPage, totalPages - 1);
+
+  if (!picturePagination || !prevPicturesPage || !nextPicturesPage || !picturesPageLabel) {
+    return totalPages;
+  }
+
+  picturePagination.hidden = totalPictures <= pageSize;
+  picturesPageLabel.textContent = `${currentPicturesPage + 1} / ${totalPages}`;
+  prevPicturesPage.disabled = currentPicturesPage === 0;
+  nextPicturesPage.disabled = currentPicturesPage >= totalPages - 1;
+  return totalPages;
+}
+
+function renderPictures(files) {
+  photoGrid.innerHTML = '';
+  photoGrid.className = picturesView === 'list' ? 'photo-list' : 'photo-grid';
+  emptyState.hidden = files.length > 0;
+  downloadAllBtn.hidden = files.length === 0;
+  downloadAllBtn.disabled = files.length === 0;
+  updateViewToggle();
+  if (files.length > 0) {
+    picturesMessage.hidden = true;
+  }
+  updatePhotoSummary(files);
+  updatePicturesPagination(files.length);
+
+  if (files.length === 0) {
+    currentPicturesPage = 0;
+    updatePicturesPagination(0);
+    picturesMessage.hidden = true;
+    renderEmptyState('No pictures yet', 'Upload photos from your phone.');
+    return;
+  }
+
+  const pageSize = getPicturesPageSize();
+  const startIndex = currentPicturesPage * pageSize;
+  const visibleFiles = files.slice(startIndex, startIndex + pageSize);
+
+  visibleFiles.forEach((file) => {
+    const imageUrl = serverUrl(file.url);
+
+    if (picturesView === 'list') {
+      const row = document.createElement('article');
+      row.className = 'photo-row';
+
+      const thumb = document.createElement('img');
+      thumb.className = 'row-thumb';
+      thumb.src = imageUrl;
+      thumb.alt = file.name;
+      thumb.loading = 'lazy';
+
+      const name = document.createElement('div');
+      name.className = 'row-name';
+      name.title = file.name;
+      name.textContent = file.name || 'Image';
+
+      const type = document.createElement('div');
+      type.className = 'row-type';
+      type.textContent = getFileType(file);
+
+      row.append(thumb, name, type, createPictureActions(file, imageUrl, 'row-actions'));
+      photoGrid.appendChild(row);
+      return;
+    }
+
     const card = document.createElement('article');
     card.className = 'photo-card';
 
     const thumbWrap = document.createElement('div');
     thumbWrap.className = 'thumb-wrap';
     const image = document.createElement('img');
-    const imageUrl = serverUrl(file.url);
     image.src = imageUrl;
     image.alt = file.name;
     image.loading = 'lazy';
     thumbWrap.appendChild(image);
 
-    const body = document.createElement('div');
-    body.className = 'photo-body';
-
-    const name = document.createElement('div');
-    name.className = 'photo-name';
-    name.title = file.name;
-    name.textContent = file.name;
-
-    const meta = document.createElement('div');
-    meta.className = 'photo-meta';
-    meta.textContent = formatBytes(file.size);
-
-    const actions = document.createElement('div');
-    actions.className = 'photo-actions';
-
-    const openButton = document.createElement('button');
-    openButton.className = 'button primary';
-    openButton.type = 'button';
-    openButton.textContent = 'Open';
-    openButton.addEventListener('click', () => {
-      window.open(imageUrl, '_blank', 'noopener');
-    });
-
-    const downloadLink = document.createElement('a');
-    downloadLink.className = 'button secondary';
-    downloadLink.href = imageUrl;
-    downloadLink.download = file.name;
-    downloadLink.textContent = 'Download';
-    downloadLink.addEventListener('click', async (event) => {
-      event.preventDefault();
-      try {
-        const response = await fetch(imageUrl);
-        if (!response.ok) {
-          throw new Error(`Download failed (${response.status})`);
-        }
-        const objectUrl = URL.createObjectURL(await response.blob());
-        const link = document.createElement('a');
-        link.href = objectUrl;
-        link.download = file.name;
-        link.click();
-        URL.revokeObjectURL(objectUrl);
-      } catch (_error) {
-        window.open(imageUrl, '_blank', 'noopener');
-      }
-    });
-
-    actions.append(openButton, downloadLink);
-    body.append(name, meta, actions);
-    card.append(thumbWrap, body);
+    card.append(thumbWrap, createPictureActions(file, imageUrl));
     photoGrid.appendChild(card);
   });
 }
@@ -602,106 +944,166 @@ function getAppFiles(files) {
   return files.filter((file) => file.name && !file.name.startsWith('.'));
 }
 
-async function loadPhoneSetup() {
+async function loadPhoneSetup({ showActivity = false } = {}) {
+  if (showActivity && setupStatus) {
+    setupStatus.textContent = 'Refreshing phone upload URL...';
+    setupStatus.className = 'status-text';
+  }
+
   try {
     const response = await fetch(serverUrl('/api/phone-url'));
     if (!response.ok) {
       throw new Error(`Phone URL request failed (${response.status})`);
     }
-    renderPhoneSetup(await response.json());
+    const data = await response.json();
+    renderPhoneSetup(data);
+    return data;
   } catch (error) {
-    renderPhoneSetup({ primaryUrl: SERVER_ORIGIN, urls: [{ url: SERVER_ORIGIN }] });
-    setupStatus.textContent = error.message || 'Using this browser address as a fallback.';
-    setupStatus.className = 'status error';
+    currentPhoneUrl = '';
+    phoneUrlInput.textContent = '';
+    phoneUrlInput.title = '';
+    if (copyPhoneUrlBtn) {
+      copyPhoneUrlBtn.disabled = true;
+    }
+    renderAlternateUrls([]);
+    renderQrCode('');
+    if (setupStatus) {
+      setupStatus.textContent = error.message || 'Could not load the phone upload URL.';
+      setupStatus.className = 'status-text error';
+    }
+    renderStatus({ state: 'offline', message: 'Phone upload URL is unavailable because the local server did not respond.' });
+    return null;
   }
 }
 
-async function loadDiagnostics() {
+async function loadServerStatus({ showActivity = false } = {}) {
+  if (showActivity) {
+    renderStatus({ state: 'checking', message: 'Checking the local server...' });
+  }
+
   try {
     const response = await fetch(serverUrl('/api/server-status'));
     if (!response.ok) {
       throw new Error(`Server status request failed (${response.status})`);
     }
-    renderDiagnostics(await response.json());
+
+    lastServerStatusData = await response.json();
+    statusLastCheckedAt = new Date();
+    renderStatus();
+    renderDiagnostics(lastServerStatusData);
+    return lastServerStatusData;
   } catch (error) {
-    diagnosticsList.innerHTML = '';
-    diagnosticsSummary.textContent = error.message || 'Could not load server diagnostics.';
-    diagnosticsSummary.className = 'summary status-badge error';
-    diagnosticsWarning.hidden = false;
-    diagnosticsWarning.className = 'diagnostics-note warning';
-    diagnosticsWarning.textContent = 'Check that the local server is running and reload the App.';
-    diagnosticsPanel.open = true;
+    lastServerStatusData = null;
+    statusLastCheckedAt = new Date();
+    renderStatus({ state: 'offline', message: error.message || 'The local server is not responding.' });
+    renderDiagnosticsError(error);
+    return null;
   }
 }
 
-function setManualRefreshBusy(isBusy) {
-  refreshBtn.disabled = isBusy;
-  refreshBtn.textContent = isBusy ? 'Refreshing...' : 'Refresh photos';
-}
+async function loadLatestPictures({ source = 'manual' } = {}) {
+  if (latestPicturesRefreshPromise) {
+    if (source === 'manual') {
+      await latestPicturesRefreshPromise;
+      return loadLatestPictures({ source: 'manual' });
+    }
+    return latestPicturesRefreshPromise;
+  }
 
-async function loadPhotos({ source = 'manual' } = {}) {
   const showActivity = source === 'manual' || source === 'initial';
 
-  if (refreshInFlight) {
-    if (source === 'manual') {
-      manualRefreshQueued = true;
-      setManualRefreshBusy(true);
+  latestPicturesRefreshPromise = (async () => {
+    photoGrid.setAttribute('aria-busy', 'true');
+
+    if (showActivity && photoSummary) {
+      photoSummary.textContent = 'Refreshing pictures...';
+      photoSummary.className = 'summary';
     }
+
+    try {
+      const response = await fetch(serverUrl('/api/latest'));
+      if (!response.ok) {
+        throw new Error(`Photo request failed (${response.status})`);
+      }
+      const data = await response.json();
+      const files = getAppFiles(Array.isArray(data.files) ? data.files : []);
+      const didPicturesChange = !arePictureListsEqual(latestFiles, files);
+
+      if (!hasLoadedPhotos || didPicturesChange) {
+        latestFiles = files;
+        renderPictures(files);
+      } else if (picturesMessage.textContent === 'Could not refresh pictures') {
+        picturesMessage.hidden = true;
+      }
+
+      hasLoadedPhotos = true;
+      renderStatus();
+      return files;
+    } catch (error) {
+      if (!hasLoadedPhotos && latestFiles.length === 0) {
+        photoGrid.innerHTML = '';
+        renderEmptyState(
+          'Could not load pictures',
+          'The desktop app will keep trying. Check that the local server is running.',
+          'error',
+        );
+      }
+      if (hasLoadedPhotos || latestFiles.length > 0) {
+        picturesMessage.textContent = 'Could not refresh pictures';
+        picturesMessage.hidden = false;
+      } else if (photoSummary) {
+        photoSummary.textContent = 'Could not load pictures';
+        photoSummary.className = 'summary error';
+        photoSummary.title = error.message || 'Could not load pictures.';
+      }
+      renderStatus({ state: 'offline', message: error.message || 'Pictures could not load.' });
+      return [];
+    } finally {
+      photoGrid.removeAttribute('aria-busy');
+    }
+  })();
+
+  try {
+    return await latestPicturesRefreshPromise;
+  } finally {
+    latestPicturesRefreshPromise = null;
+  }
+}
+
+function setDashboardRefreshBusy(isBusy) {
+  refreshBtn.disabled = isBusy;
+  refreshBtn.textContent = isBusy ? 'Refreshing...' : 'Refresh';
+}
+
+async function refreshDashboard({ source = 'manual' } = {}) {
+  if (dashboardRefreshInFlight) {
     return;
   }
 
-  refreshInFlight = true;
-  photoGrid.setAttribute('aria-busy', 'true');
+  const showActivity = source === 'manual' || source === 'initial';
+  dashboardRefreshInFlight = true;
 
   if (showActivity) {
-    setManualRefreshBusy(true);
-    photoSummary.textContent = 'Refreshing...';
-    photoSummary.className = 'summary count-badge';
+    setDashboardRefreshBusy(true);
   }
 
   try {
-    const response = await fetch(serverUrl('/api/latest'));
-    if (!response.ok) {
-      throw new Error(`Photo request failed (${response.status})`);
-    }
-    const data = await response.json();
-    const files = getAppFiles(Array.isArray(data.files) ? data.files : []);
-    const filesSignature = JSON.stringify(files.map(({ name, size, url }) => ({ name, size, url })));
-
-    if (filesSignature !== latestFilesSignature) {
-      renderPhotos(files);
-      latestFilesSignature = filesSignature;
-    } else {
-      updatePhotoSummary(files);
-    }
-    hasLoadedPhotos = true;
-  } catch (error) {
-    if (!hasLoadedPhotos) {
-      photoGrid.innerHTML = '';
-      emptyState.hidden = false;
-    }
-    photoSummary.textContent = 'Refresh failed · Retrying...';
-    photoSummary.className = 'summary count-badge error';
-    photoSummary.title = error.message || 'Could not load photos.';
+    await Promise.all([
+      loadServerStatus({ showActivity }),
+      loadPhoneSetup({ showActivity }),
+      loadLatestPictures({ source }),
+    ]);
   } finally {
-    refreshInFlight = false;
-    const runQueuedManualRefresh = manualRefreshQueued;
-    manualRefreshQueued = false;
-
-    if (runQueuedManualRefresh) {
-      await loadPhotos({ source: 'manual' });
-    } else {
-      photoGrid.removeAttribute('aria-busy');
-      if (showActivity) {
-        setManualRefreshBusy(false);
-      }
+    dashboardRefreshInFlight = false;
+    if (showActivity) {
+      setDashboardRefreshBusy(false);
     }
   }
 }
 
 function runAutoRefresh() {
   if (!document.hidden) {
-    loadPhotos({ source: 'auto' });
+    loadLatestPictures({ source: 'auto' });
   }
 }
 
@@ -721,24 +1123,90 @@ function stopAutoRefresh() {
 }
 
 initGaloisTables();
+renderStatus({ state: 'checking', message: 'Checking the local server...' });
+renderQrCode('');
 
 refreshBtn.addEventListener('click', () => {
-  loadPhotos({ source: 'manual' });
+  refreshDashboard({ source: 'manual' });
 });
-copyPhoneUrlBtn.addEventListener('click', async () => {
-  if (!currentPhoneUrl) {
+
+qrBtn.addEventListener('click', openQrModal);
+
+closeQrBtn.addEventListener('click', closeQrModal);
+
+qrModal.addEventListener('click', (event) => {
+  if (event.target === qrModal) {
+    closeQrModal();
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && qrModal && !qrModal.hidden) {
+    closeQrModal();
+  }
+});
+
+downloadAllBtn.addEventListener('click', downloadAllPictures);
+
+gridViewBtn.addEventListener('click', () => {
+  if (picturesView === 'grid') {
     return;
   }
 
-  try {
-    await copyText(currentPhoneUrl);
-    setupStatus.textContent = 'Phone upload URL copied.';
-    setupStatus.className = 'status success';
-  } catch (_error) {
-    setupStatus.textContent = 'Copy failed. Select the URL and copy it manually.';
-    setupStatus.className = 'status error';
-  }
+  picturesView = 'grid';
+  localStorage.setItem(PICTURES_VIEW_KEY, picturesView);
+  renderPictures(latestFiles);
 });
+
+listViewBtn.addEventListener('click', () => {
+  if (picturesView === 'list') {
+    return;
+  }
+
+  picturesView = 'list';
+  localStorage.setItem(PICTURES_VIEW_KEY, picturesView);
+  renderPictures(latestFiles);
+});
+
+prevPicturesPage.addEventListener('click', () => {
+  if (currentPicturesPage === 0) {
+    return;
+  }
+
+  currentPicturesPage -= 1;
+  renderPictures(latestFiles);
+});
+
+nextPicturesPage.addEventListener('click', () => {
+  const totalPages = Math.max(1, Math.ceil(latestFiles.length / getPicturesPageSize()));
+  if (currentPicturesPage >= totalPages - 1) {
+    return;
+  }
+
+  currentPicturesPage += 1;
+  renderPictures(latestFiles);
+});
+
+if (copyPhoneUrlBtn) {
+  copyPhoneUrlBtn.addEventListener('click', async () => {
+    if (!currentPhoneUrl) {
+      return;
+    }
+
+    try {
+      await copyText(currentPhoneUrl);
+      if (setupStatus) {
+        setupStatus.textContent = 'Phone upload URL copied.';
+        setupStatus.className = 'status-text success';
+      }
+    } catch (_error) {
+      if (setupStatus) {
+        setupStatus.textContent = 'Copy failed. Select the URL and copy it manually.';
+        setupStatus.className = 'status-text error';
+      }
+    }
+  });
+}
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
@@ -746,13 +1214,11 @@ document.addEventListener('visibilitychange', () => {
     return;
   }
 
-  loadPhotos({ source: 'auto' });
+  loadLatestPictures({ source: 'auto' });
   startAutoRefresh();
 });
 
 window.addEventListener('pagehide', stopAutoRefresh);
 
-loadPhoneSetup();
-loadDiagnostics();
-loadPhotos({ source: 'initial' });
+refreshDashboard({ source: 'initial' });
 startAutoRefresh();

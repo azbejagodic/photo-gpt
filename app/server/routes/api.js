@@ -6,6 +6,7 @@ import { getPhoneUrlRecords } from '../lan.js';
 import {
   clearLatestFiles,
   listLatestFiles,
+  toUploadedFileRecords,
   upload,
   uploadErrorHandler,
 } from '../storage.js';
@@ -102,9 +103,9 @@ const createApiRouter = ({ getServerStatus }) => {
     } catch (err) {
       next(err);
     }
-  }, upload.array('photos', MAX_FILES), uploadErrorHandler, async (_req, res, next) => {
+  }, upload.array('photos', MAX_FILES), uploadErrorHandler, async (req, res, next) => {
     try {
-      const files = await listLatestFiles();
+      const files = toUploadedFileRecords(req.files);
       res.json({ files });
     } catch (err) {
       next(err);

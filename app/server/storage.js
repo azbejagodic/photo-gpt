@@ -8,36 +8,39 @@ import {
   UPLOAD_TEMP_DIR,
 } from './config.js';
 
-const toFileRecord = async (name) => {
-  const fullPath = path.join(DATA_DIR, name);
-  const stats = await fs.stat(fullPath);
+const toFileRecord = ({ name, size }) => ({
+  name,
+  size,
+  url: `/files/${encodeURIComponent(name)}`,
+});
+
+const toUploadedFileRecords = (files = []) => files.map((file) => (
+  toFileRecord({ name: file.filename, size: file.size })
+));
+
+const statLatestFile = async (name) => {
+  const stats = await fs.stat(path.join(DATA_DIR, name));
   return {
     name,
     size: stats.size,
-    url: `/files/${encodeURIComponent(name)}`,
+    mtimeMs: stats.mtimeMs,
   };
 };
 
 const listLatestFiles = async () => {
-  const names = await fs.readdir(DATA_DIR);
-  const filesOnly = [];
-
-  for (const name of names) {
-    const fullPath = path.join(DATA_DIR, name);
-    const stats = await fs.stat(fullPath);
-    if (stats.isFile()) {
-      filesOnly.push({ name, mtimeMs: stats.mtimeMs });
-    }
-  }
+  const entries = await fs.readdir(DATA_DIR, { withFileTypes: true });
+  const filesOnly = await Promise.all(entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => statLatestFile(entry.name)));
 
   filesOnly.sort((a, b) => a.mtimeMs - b.mtimeMs);
-  return Promise.all(filesOnly.map((file) => toFileRecord(file.name)));
+  return filesOnly.map(toFileRecord);
 };
 
 const clearLatestFiles = async () => {
-  const existingNames = await fs.readdir(DATA_DIR);
-  await Promise.all(existingNames.map((name) => (
-    fs.rm(path.join(DATA_DIR, name), { force: true, recursive: true })
+  const existingEntries = await fs.readdir(DATA_DIR, { withFileTypes: true });
+  await Promise.all(existingEntries.map((entry) => (
+    fs.rm(path.join(DATA_DIR, entry.name), { force: true, recursive: entry.isDirectory() })
   )));
 };
 
@@ -46,16 +49,33 @@ const ensureStorageDirectories = async () => {
   await fs.mkdir(UPLOAD_TEMP_DIR, { recursive: true });
 };
 
+const padDatePart = (value) => String(value).padStart(2, '0');
+
+const formatUploadTimestamp = (date) => {
+  const year = date.getFullYear();
+  const month = padDatePart(date.getMonth() + 1);
+  const day = padDatePart(date.getDate());
+  const hours = padDatePart(date.getHours());
+  const minutes = padDatePart(date.getMinutes());
+  const seconds = padDatePart(date.getSeconds());
+
+  return `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
+};
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, DATA_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const safeBaseName = path
-      .basename(file.originalname, ext)
-      .replace(/[^a-zA-Z0-9-_]/g, '_')
-      .slice(0, 60) || 'photo';
+  filename: (req, file, cb) => {
+    if (!req.uploadBatchTimestamp) {
+      req.uploadBatchTimestamp = formatUploadTimestamp(new Date());
+      req.uploadBatchIndex = 0;
+    }
 
-    cb(null, `${Date.now()}-${safeBaseName}${ext.toLowerCase()}`);
+    req.uploadBatchIndex += 1;
+
+    const ext = path.extname(file.originalname).toLowerCase();
+    const photoNumber = String(req.uploadBatchIndex).padStart(3, '0');
+
+    cb(null, `photo-gpt_${req.uploadBatchTimestamp}_photo-${photoNumber}${ext}`);
   },
 });
 
@@ -99,6 +119,7 @@ export {
   clearLatestFiles,
   ensureStorageDirectories,
   listLatestFiles,
+  toUploadedFileRecords,
   upload,
   uploadErrorHandler,
 };

@@ -135,6 +135,11 @@ function buildImageUrl(origin, file) {
   return `${origin}/files/${encodeURIComponent(file.name)}`;
 }
 
+function isVideoFile(file) {
+  const extension = file?.name?.split('.').pop()?.trim().toLowerCase();
+  return extension === 'mp4' || extension === 'mov' || extension === 'webm';
+}
+
 async function convertImageBlobToPng(blob) {
   console.log('[popup] convert start', { sourceType: blob.type, sourceSize: blob.size });
 
@@ -281,6 +286,10 @@ async function refresh() {
 
     const fragment = document.createDocumentFragment();
     for (const file of files) {
+      if (isVideoFile(file)) {
+        continue;
+      }
+
       try {
         fragment.appendChild(makeCard(imageOrigin, file));
       } catch (error) {

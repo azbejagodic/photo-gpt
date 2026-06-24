@@ -1,14 +1,21 @@
 import { Router } from 'express';
 import { promises as fs } from 'fs';
-import path from 'path';
-import { DATA_DIR, MAX_FILES, PORT } from '../config.js';
+import { MAX_FILES, PORT } from '../config.js';
 import { getPhoneUrlRecords } from '../lan.js';
 import {
-  clearLatestFiles,
+  clearAllBatches,
+  deleteBatch,
+  finalizeUploadedBatch,
+  getBatchFilePath,
+  getStorageSettings,
+  listBatches,
+  listBatchFiles,
   listLatestFiles,
-  toUploadedFileRecords,
+  selectBatch,
+  updateStorageSettings,
   upload,
   uploadErrorHandler,
+  validateUploadedFiles,
 } from '../storage.js';
 
 const CRC_TABLE = (() => {
@@ -31,13 +38,19 @@ const getCrc32 = (buffer) => {
   return (crc ^ 0xffffffff) >>> 0;
 };
 
+const sendStorageError = (res, err) => {
+  const message = err.message || 'Storage request failed.';
+  const status = /not found/i.test(message) ? 404 : 400;
+  res.status(status).json({ error: message });
+};
+
 const createZipBuffer = async (files) => {
   const localParts = [];
   const centralParts = [];
   let offset = 0;
 
   for (const file of files) {
-    const data = await fs.readFile(path.join(DATA_DIR, file.name));
+    const data = await fs.readFile(await getBatchFilePath(file.name));
     const name = Buffer.from(file.name, 'utf8');
     const crc = getCrc32(data);
 
@@ -96,16 +109,9 @@ const createZipBuffer = async (files) => {
 const createApiRouter = ({ getServerStatus }) => {
   const router = Router();
 
-  router.post('/upload', async (_req, _res, next) => {
+  router.post('/upload', upload.array('photos', MAX_FILES), validateUploadedFiles, uploadErrorHandler, async (req, res, next) => {
     try {
-      await clearLatestFiles();
-      next();
-    } catch (err) {
-      next(err);
-    }
-  }, upload.array('photos', MAX_FILES), uploadErrorHandler, async (req, res, next) => {
-    try {
-      const files = toUploadedFileRecords(req.files);
+      const files = await finalizeUploadedBatch(req);
       res.json({ files });
     } catch (err) {
       next(err);
@@ -136,6 +142,70 @@ const createApiRouter = ({ getServerStatus }) => {
       res.send(zipBuffer);
     } catch (err) {
       next(err);
+    }
+  });
+
+  router.get('/batches', async (_req, res) => {
+    try {
+      res.json({ batches: await listBatches() });
+    } catch (err) {
+      sendStorageError(res, err);
+    }
+  });
+
+  router.get('/batches/:id', async (req, res) => {
+    try {
+      res.json({
+        id: req.params.id,
+        files: await listBatchFiles(req.params.id),
+      });
+    } catch (err) {
+      sendStorageError(res, err);
+    }
+  });
+
+  router.post('/batches/:id/select', async (req, res) => {
+    try {
+      res.json({
+        id: req.params.id,
+        files: await selectBatch(req.params.id),
+      });
+    } catch (err) {
+      sendStorageError(res, err);
+    }
+  });
+
+  router.delete('/batches/:id', async (req, res) => {
+    try {
+      await deleteBatch(req.params.id);
+      res.json({ ok: true });
+    } catch (err) {
+      sendStorageError(res, err);
+    }
+  });
+
+  router.delete('/batches', async (_req, res) => {
+    try {
+      await clearAllBatches();
+      res.json({ ok: true });
+    } catch (err) {
+      sendStorageError(res, err);
+    }
+  });
+
+  router.get('/storage-settings', async (_req, res) => {
+    try {
+      res.json(await getStorageSettings());
+    } catch (err) {
+      sendStorageError(res, err);
+    }
+  });
+
+  router.put('/storage-settings', async (req, res) => {
+    try {
+      res.json(await updateStorageSettings(req.body));
+    } catch (err) {
+      sendStorageError(res, err);
     }
   });
 

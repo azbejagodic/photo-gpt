@@ -20,6 +20,7 @@ const emptyState = document.getElementById('emptyState');
 const emptyStateTitle = document.getElementById('emptyStateTitle');
 const emptyStateText = document.getElementById('emptyStateText');
 const photoGrid = document.getElementById('photoGrid');
+const picturesPanel = document.querySelector('.pictures-panel');
 const picturePagination = document.getElementById('picturePagination');
 const prevPicturesPage = document.getElementById('prevPicturesPage');
 const nextPicturesPage = document.getElementById('nextPicturesPage');
@@ -28,6 +29,12 @@ const downloadAllBtn = document.getElementById('downloadAllBtn');
 const picturesMessage = document.getElementById('picturesMessage');
 const gridViewBtn = document.getElementById('gridViewBtn');
 const listViewBtn = document.getElementById('listViewBtn');
+const batchesBtn = document.getElementById('batchesBtn');
+const batchesPanel = document.getElementById('batchesPanel');
+const batchesList = document.getElementById('batchesList');
+const retentionSelect = document.getElementById('retentionSelect');
+const saveRetentionBtn = document.getElementById('saveRetentionBtn');
+const clearBatchesBtn = document.getElementById('clearBatchesBtn');
 const diagnosticsSummary = document.getElementById('diagnosticsSummary');
 const diagnosticsList = document.getElementById('diagnosticsList');
 const diagnosticsWarning = document.getElementById('diagnosticsWarning');
@@ -43,8 +50,14 @@ const QR_ECC_CODEWORDS = 10;
 const GF_EXP = [];
 const GF_LOG = [];
 const AUTO_REFRESH_MS = 5000;
-const GRID_PAGE_SIZE = 6;
 const LIST_PAGE_SIZE = 10;
+const DEFAULT_GRID_LAYOUT = {
+  columns: 3,
+  rows: 2,
+  pageSize: 6,
+};
+const GRID_GAP = 12;
+const GRID_MIN_CARD_WIDTH = 160;
 const PICTURES_VIEW_KEY = 'photoGptPicturesView';
 
 let currentPhoneUrl = '';
@@ -53,7 +66,10 @@ let latestPicturesRefreshPromise = null;
 let autoRefreshTimer = null;
 let hasLoadedPhotos = false;
 let latestFiles = [];
+let savedBatches = [];
+let batchesRefreshPromise = null;
 let currentPicturesPage = 0;
+let gridLayout = { ...DEFAULT_GRID_LAYOUT };
 let picturesView = localStorage.getItem(PICTURES_VIEW_KEY) === 'list' ? 'list' : 'grid';
 let lastServerStatusData = null;
 let statusLastCheckedAt = null;
@@ -490,6 +506,18 @@ async function copyImage(imageUrl) {
   }
 }
 
+function getVideoMimeType(file) {
+  const extension = file.name?.split('.').pop()?.trim().toLowerCase();
+  if (extension === 'mp4') return 'video/mp4';
+  if (extension === 'mov') return 'video/quicktime';
+  if (extension === 'webm') return 'video/webm';
+  return '';
+}
+
+function isVideoFile(file) {
+  return Boolean(getVideoMimeType(file));
+}
+
 async function downloadImage(file, imageUrl) {
   try {
     const response = await fetch(imageUrl);
@@ -535,6 +563,210 @@ async function downloadAllPictures() {
   } finally {
     downloadAllBtn.disabled = false;
     downloadAllBtn.textContent = 'Download all';
+  }
+}
+
+function setPicturesMessage(message) {
+  picturesMessage.textContent = message;
+  picturesMessage.hidden = false;
+  picturesMessage.classList.add('error');
+}
+
+function clearPicturesMessage() {
+  picturesMessage.textContent = '';
+  picturesMessage.hidden = true;
+  picturesMessage.classList.remove('error');
+}
+
+function formatBatchDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'Unknown time';
+  }
+
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+async function fetchJson(resourcePath, options = {}) {
+  const response = await fetch(serverUrl(resourcePath), options);
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const data = await response.json();
+      if (data?.error) {
+        message = data.error;
+      }
+    } catch {
+      // Keep the status-based message when the response is not JSON.
+    }
+    throw new Error(message);
+  }
+  return response.json();
+}
+
+function renderBatches() {
+  if (!batchesList) {
+    return;
+  }
+
+  batchesList.textContent = '';
+
+  if (!savedBatches.length) {
+    const empty = document.createElement('p');
+    empty.className = 'batches-empty';
+    empty.textContent = 'No saved batches.';
+    batchesList.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  savedBatches.forEach((batch) => {
+    const item = document.createElement('article');
+    item.className = batch.current ? 'batch-item current' : 'batch-item';
+
+    const details = document.createElement('div');
+    details.className = 'batch-details';
+
+    const title = document.createElement('strong');
+    title.textContent = formatBatchDate(batch.createdAt);
+
+    const meta = document.createElement('span');
+    const countLabel = batch.fileCount === 1 ? '1 file' : `${batch.fileCount} files`;
+    meta.textContent = `${countLabel} · ${formatBytes(batch.totalSize)}${batch.current ? ' · Current' : ''}`;
+
+    details.append(title, meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'batch-actions';
+
+    const selectButton = document.createElement('button');
+    selectButton.className = 'batch-button';
+    selectButton.type = 'button';
+    selectButton.textContent = batch.current ? 'Selected' : 'Select';
+    selectButton.disabled = batch.current;
+    selectButton.addEventListener('click', () => selectBatch(batch.id));
+
+    const deleteButton = document.createElement('button');
+    deleteButton.className = 'batch-button danger';
+    deleteButton.type = 'button';
+    deleteButton.textContent = 'Delete';
+    deleteButton.addEventListener('click', () => deleteBatch(batch));
+
+    actions.append(selectButton, deleteButton);
+    item.append(details, actions);
+    fragment.appendChild(item);
+  });
+
+  batchesList.appendChild(fragment);
+}
+
+async function loadBatchHistory({ showActivity = false } = {}) {
+  if (!batchesPanel || batchesPanel.hidden) {
+    return;
+  }
+
+  if (batchesRefreshPromise) {
+    return batchesRefreshPromise;
+  }
+
+  batchesRefreshPromise = (async () => {
+    try {
+      const [batchData, settings] = await Promise.all([
+        fetchJson('/api/batches'),
+        fetchJson('/api/storage-settings'),
+      ]);
+
+      savedBatches = Array.isArray(batchData.batches) ? batchData.batches : [];
+      if (retentionSelect) {
+        retentionSelect.value = settings.retentionDays ? String(settings.retentionDays) : '';
+      }
+      renderBatches();
+    } catch (error) {
+      setPicturesMessage(error.message || 'Could not load batches.');
+    } finally {
+      batchesRefreshPromise = null;
+    }
+  })();
+
+  return batchesRefreshPromise;
+}
+
+async function selectBatch(id) {
+  try {
+    await fetchJson(`/api/batches/${encodeURIComponent(id)}/select`, { method: 'POST' });
+    await loadLatestPictures({ source: 'manual', force: true });
+    await loadBatchHistory();
+    clearPicturesMessage();
+  } catch (error) {
+    setPicturesMessage(error.message || 'Could not select batch.');
+  }
+}
+
+async function deleteBatch(batch) {
+  const label = formatBatchDate(batch.createdAt);
+  if (!window.confirm(`Delete the batch from ${label}?`)) {
+    return;
+  }
+
+  try {
+    await fetchJson(`/api/batches/${encodeURIComponent(batch.id)}`, { method: 'DELETE' });
+    await loadLatestPictures({ source: 'manual', force: true });
+    await loadBatchHistory();
+    clearPicturesMessage();
+  } catch (error) {
+    setPicturesMessage(error.message || 'Could not delete batch.');
+  }
+}
+
+async function clearAllBatches() {
+  if (!window.confirm('Clear all saved batches? This cannot be undone.')) {
+    return;
+  }
+
+  try {
+    await fetchJson('/api/batches', { method: 'DELETE' });
+    await loadLatestPictures({ source: 'manual', force: true });
+    await loadBatchHistory();
+    clearPicturesMessage();
+  } catch (error) {
+    setPicturesMessage(error.message || 'Could not clear batches.');
+  }
+}
+
+async function saveRetentionSetting() {
+  try {
+    const value = retentionSelect?.value || '';
+    await fetchJson('/api/storage-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ retentionDays: value ? Number(value) : null }),
+    });
+    await loadBatchHistory();
+    clearPicturesMessage();
+  } catch (error) {
+    setPicturesMessage(error.message || 'Could not save retention setting.');
+  }
+}
+
+function toggleBatchesPanel() {
+  if (!batchesPanel) {
+    return;
+  }
+
+  batchesPanel.hidden = !batchesPanel.hidden;
+  picturesPanel?.classList.toggle('history-open', !batchesPanel.hidden);
+  applyGridLayout();
+  batchesBtn?.classList.toggle('active', !batchesPanel.hidden);
+  if (!batchesPanel.hidden) {
+    loadBatchHistory({ showActivity: true });
+  }
+  if (picturesView === 'grid') {
+    renderPictures(latestFiles);
   }
 }
 
@@ -795,8 +1027,41 @@ function renderEmptyState(title, text, state = 'empty') {
   emptyState.hidden = false;
 }
 
+function calculateGridLayout() {
+  if (picturesView !== 'grid') {
+    return gridLayout;
+  }
+
+  const width = photoGrid.clientWidth;
+  if (width <= 0) {
+    return gridLayout;
+  }
+
+  const historyOpen = Boolean(batchesPanel && !batchesPanel.hidden);
+  const columns = historyOpen
+    ? DEFAULT_GRID_LAYOUT.columns
+    : Math.max(DEFAULT_GRID_LAYOUT.columns, Math.floor((width + GRID_GAP) / (GRID_MIN_CARD_WIDTH + GRID_GAP)));
+  const rows = DEFAULT_GRID_LAYOUT.rows;
+
+  return {
+    columns,
+    rows,
+    pageSize: Math.max(1, columns * rows),
+  };
+}
+
+function applyGridLayout() {
+  if (picturesView !== 'grid') {
+    return;
+  }
+
+  gridLayout = calculateGridLayout();
+  photoGrid.style.setProperty('--grid-columns', String(gridLayout.columns));
+  photoGrid.style.setProperty('--grid-rows', String(gridLayout.rows));
+}
+
 function getPicturesPageSize() {
-  return picturesView === 'list' ? LIST_PAGE_SIZE : GRID_PAGE_SIZE;
+  return picturesView === 'list' ? LIST_PAGE_SIZE : gridLayout.pageSize;
 }
 
 function getFileType(file) {
@@ -827,45 +1092,61 @@ function updateViewToggle() {
   listViewBtn.setAttribute('aria-pressed', String(picturesView === 'list'));
 }
 
-function createPictureActions(file, imageUrl, variant = '') {
+function createVideoPlaceholder(className = '') {
+  const placeholder = document.createElement('div');
+  placeholder.className = className ? `video-placeholder ${className}` : 'video-placeholder';
+  placeholder.textContent = 'Video';
+  return placeholder;
+}
+
+function createPictureActions(file, mediaUrl, variant = '') {
   const actions = document.createElement('div');
   actions.className = variant ? `photo-actions ${variant}` : 'photo-actions';
+  const isVideo = isVideoFile(file);
 
-  const copyButton = document.createElement('button');
-  copyButton.className = 'photo-action';
-  copyButton.type = 'button';
-  copyButton.textContent = 'Copy';
-  copyButton.addEventListener('click', async () => {
-    copyButton.disabled = true;
-    try {
-      await copyImage(imageUrl);
-    } finally {
-      copyButton.disabled = false;
-    }
-  });
+  if (!isVideo) {
+    const copyButton = document.createElement('button');
+    copyButton.className = 'photo-action';
+    copyButton.type = 'button';
+    copyButton.textContent = 'Copy';
+    copyButton.addEventListener('click', async () => {
+      copyButton.disabled = true;
+      try {
+        await copyImage(mediaUrl);
+      } finally {
+        copyButton.disabled = false;
+      }
+    });
+    actions.appendChild(copyButton);
+  } else {
+    const copySlot = document.createElement('span');
+    copySlot.className = 'copy-slot';
+    copySlot.setAttribute('aria-hidden', 'true');
+    actions.appendChild(copySlot);
+  }
 
   const downloadButton = document.createElement('button');
   downloadButton.className = 'photo-action';
   downloadButton.type = 'button';
   downloadButton.textContent = 'Download';
   downloadButton.addEventListener('click', () => {
-    downloadImage(file, imageUrl);
+    downloadImage(file, mediaUrl);
   });
 
-  actions.append(copyButton, downloadButton);
+  actions.appendChild(downloadButton);
   return actions;
 }
 
 function updatePicturesPagination(totalPictures) {
   const pageSize = getPicturesPageSize();
   const totalPages = Math.max(1, Math.ceil(totalPictures / pageSize));
-  currentPicturesPage = Math.min(currentPicturesPage, totalPages - 1);
+  currentPicturesPage = picturesView === 'list' ? 0 : Math.min(currentPicturesPage, totalPages - 1);
 
   if (!picturePagination || !prevPicturesPage || !nextPicturesPage || !picturesPageLabel) {
     return totalPages;
   }
 
-  picturePagination.hidden = totalPictures <= pageSize;
+  picturePagination.hidden = picturesView === 'list' || totalPictures <= pageSize;
   picturesPageLabel.textContent = `${currentPicturesPage + 1} / ${totalPages}`;
   prevPicturesPage.disabled = currentPicturesPage === 0;
   nextPicturesPage.disabled = currentPicturesPage >= totalPages - 1;
@@ -875,6 +1156,12 @@ function updatePicturesPagination(totalPictures) {
 function renderPictures(files) {
   photoGrid.innerHTML = '';
   photoGrid.className = picturesView === 'list' ? 'photo-list' : 'photo-grid';
+  if (picturesView === 'grid') {
+    applyGridLayout();
+  } else {
+    photoGrid.style.removeProperty('--grid-columns');
+    photoGrid.style.removeProperty('--grid-rows');
+  }
   emptyState.hidden = files.length > 0;
   downloadAllBtn.hidden = files.length === 0;
   downloadAllBtn.disabled = files.length === 0;
@@ -895,32 +1182,34 @@ function renderPictures(files) {
 
   const pageSize = getPicturesPageSize();
   const startIndex = currentPicturesPage * pageSize;
-  const visibleFiles = files.slice(startIndex, startIndex + pageSize);
+  const visibleFiles = picturesView === 'list'
+    ? files
+    : files.slice(startIndex, startIndex + pageSize);
+  const fragment = document.createDocumentFragment();
 
   visibleFiles.forEach((file) => {
-    const imageUrl = serverUrl(file.url);
+    const mediaUrl = serverUrl(file.url);
+    const isVideo = isVideoFile(file);
 
     if (picturesView === 'list') {
       const row = document.createElement('article');
       row.className = 'photo-row';
 
-      const thumb = document.createElement('img');
-      thumb.className = 'row-thumb';
-      thumb.src = imageUrl;
-      thumb.alt = file.name;
-      thumb.loading = 'lazy';
-
       const name = document.createElement('div');
       name.className = 'row-name';
       name.title = file.name;
-      name.textContent = file.name || 'Image';
+      name.textContent = file.name || (isVideo ? 'Video' : 'Image');
 
       const type = document.createElement('div');
       type.className = 'row-type';
       type.textContent = getFileType(file);
 
-      row.append(thumb, name, type, createPictureActions(file, imageUrl, 'row-actions'));
-      photoGrid.appendChild(row);
+      const size = document.createElement('div');
+      size.className = 'row-size';
+      size.textContent = Number.isFinite(file.size) ? formatBytes(file.size) : '';
+
+      row.append(name, type, size, createPictureActions(file, mediaUrl, 'row-actions'));
+      fragment.appendChild(row);
       return;
     }
 
@@ -929,15 +1218,21 @@ function renderPictures(files) {
 
     const thumbWrap = document.createElement('div');
     thumbWrap.className = 'thumb-wrap';
-    const image = document.createElement('img');
-    image.src = imageUrl;
-    image.alt = file.name;
-    image.loading = 'lazy';
-    thumbWrap.appendChild(image);
+    if (isVideo) {
+      thumbWrap.appendChild(createVideoPlaceholder());
+    } else {
+      const image = document.createElement('img');
+      image.src = mediaUrl;
+      image.alt = file.name;
+      image.loading = 'lazy';
+      thumbWrap.appendChild(image);
+    }
 
-    card.append(thumbWrap, createPictureActions(file, imageUrl));
-    photoGrid.appendChild(card);
+    card.append(thumbWrap, createPictureActions(file, mediaUrl));
+    fragment.appendChild(card);
   });
+
+  photoGrid.appendChild(fragment);
 }
 
 function getAppFiles(files) {
@@ -1001,11 +1296,11 @@ async function loadServerStatus({ showActivity = false } = {}) {
   }
 }
 
-async function loadLatestPictures({ source = 'manual' } = {}) {
+async function loadLatestPictures({ source = 'manual', force = false } = {}) {
   if (latestPicturesRefreshPromise) {
     if (source === 'manual') {
       await latestPicturesRefreshPromise;
-      return loadLatestPictures({ source: 'manual' });
+      return loadLatestPictures({ source: 'manual', force });
     }
     return latestPicturesRefreshPromise;
   }
@@ -1029,7 +1324,7 @@ async function loadLatestPictures({ source = 'manual' } = {}) {
       const files = getAppFiles(Array.isArray(data.files) ? data.files : []);
       const didPicturesChange = !arePictureListsEqual(latestFiles, files);
 
-      if (!hasLoadedPhotos || didPicturesChange) {
+      if (force || !hasLoadedPhotos || didPicturesChange) {
         latestFiles = files;
         renderPictures(files);
       } else if (picturesMessage.textContent === 'Could not refresh pictures') {
@@ -1092,6 +1387,7 @@ async function refreshDashboard({ source = 'manual' } = {}) {
       loadServerStatus({ showActivity }),
       loadPhoneSetup({ showActivity }),
       loadLatestPictures({ source }),
+      loadBatchHistory(),
     ]);
   } finally {
     dashboardRefreshInFlight = false;
@@ -1122,6 +1418,25 @@ function stopAutoRefresh() {
   autoRefreshTimer = null;
 }
 
+function handleGridResize() {
+  if (picturesView !== 'grid') {
+    return;
+  }
+
+  const previousPageSize = gridLayout.pageSize;
+  const previousColumns = gridLayout.columns;
+  const previousRows = gridLayout.rows;
+  applyGridLayout();
+
+  if (
+    gridLayout.pageSize !== previousPageSize
+    || gridLayout.columns !== previousColumns
+    || gridLayout.rows !== previousRows
+  ) {
+    renderPictures(latestFiles);
+  }
+}
+
 initGaloisTables();
 renderStatus({ state: 'checking', message: 'Checking the local server...' });
 renderQrCode('');
@@ -1147,6 +1462,9 @@ document.addEventListener('keydown', (event) => {
 });
 
 downloadAllBtn.addEventListener('click', downloadAllPictures);
+batchesBtn?.addEventListener('click', toggleBatchesPanel);
+saveRetentionBtn?.addEventListener('click', saveRetentionSetting);
+clearBatchesBtn?.addEventListener('click', clearAllBatches);
 
 gridViewBtn.addEventListener('click', () => {
   if (picturesView === 'grid') {
@@ -1169,7 +1487,7 @@ listViewBtn.addEventListener('click', () => {
 });
 
 prevPicturesPage.addEventListener('click', () => {
-  if (currentPicturesPage === 0) {
+  if (picturesView === 'list' || currentPicturesPage === 0) {
     return;
   }
 
@@ -1178,6 +1496,10 @@ prevPicturesPage.addEventListener('click', () => {
 });
 
 nextPicturesPage.addEventListener('click', () => {
+  if (picturesView === 'list') {
+    return;
+  }
+
   const totalPages = Math.max(1, Math.ceil(latestFiles.length / getPicturesPageSize()));
   if (currentPicturesPage >= totalPages - 1) {
     return;
@@ -1219,6 +1541,13 @@ document.addEventListener('visibilitychange', () => {
 });
 
 window.addEventListener('pagehide', stopAutoRefresh);
+
+if (window.ResizeObserver) {
+  const gridResizeObserver = new ResizeObserver(handleGridResize);
+  gridResizeObserver.observe(photoGrid);
+} else {
+  window.addEventListener('resize', handleGridResize);
+}
 
 refreshDashboard({ source: 'initial' });
 startAutoRefresh();

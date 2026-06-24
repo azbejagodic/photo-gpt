@@ -24,7 +24,7 @@ let serverInstance = null;
 
 app.use(cors({
   origin: true,
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
 }));
 
 const getServerStatus = () => {
@@ -62,7 +62,7 @@ const appendStartupLog = async (event, details = {}) => {
   })}\n`);
 };
 
-app.use('/api', createApiRouter({ getServerStatus }));
+app.use('/api', express.json({ limit: '32kb' }), createApiRouter({ getServerStatus }));
 app.use('/files', createFilesRouter());
 app.use('/', express.static(PWA_DIR));
 

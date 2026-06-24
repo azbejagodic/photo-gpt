@@ -29,15 +29,38 @@
               <button id="gridViewBtn" class="view-toggle-button" type="button">Grid</button>
               <button id="listViewBtn" class="view-toggle-button" type="button">List</button>
             </div>
+            <button id="batchesBtn" class="download-all-button" type="button">History</button>
             <button id="downloadAllBtn" class="download-all-button" type="button" hidden>Download all</button>
             <div id="picturePagination" class="picture-pagination" hidden>
-              <button id="prevPicturesPage" class="page-button" type="button" aria-label="Previous pictures page">&lsaquo;</button>
+              <button id="prevPicturesPage" class="page-button" type="button" aria-label="Previous page">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
+              </button>
               <span id="picturesPageLabel" class="page-label">1 / 1</span>
-              <button id="nextPicturesPage" class="page-button" type="button" aria-label="Next pictures page">&rsaquo;</button>
+              <button id="nextPicturesPage" class="page-button" type="button" aria-label="Next page">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M9 6l6 6-6 6" />
+                </svg>
+              </button>
             </div>
           </div>
         </div>
         <p id="picturesMessage" class="pictures-message" hidden></p>
+        <section id="batchesPanel" class="batches-panel" aria-label="Saved upload batches" hidden>
+          <div class="batches-toolbar">
+            <strong>Batches</strong>
+            <select id="retentionSelect" class="retention-select" aria-label="Retention setting">
+              <option value="">No automatic deletion</option>
+              <option value="1">Delete after 1 day</option>
+              <option value="7">Delete after 7 days</option>
+              <option value="30">Delete after 30 days</option>
+            </select>
+            <button id="saveRetentionBtn" class="batch-button" type="button">Save</button>
+            <button id="clearBatchesBtn" class="batch-button danger" type="button">Clear all</button>
+          </div>
+          <div id="batchesList" class="batches-list" tabindex="0" aria-label="Saved batches list"></div>
+        </section>
 
         <div id="emptyState" class="empty-state" hidden>
           <h3 id="emptyStateTitle">No pictures yet</h3>

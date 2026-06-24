@@ -142,3 +142,5 @@ vite.config.ts.timestamp-*
 data/latest/*
 !data/latest/.gitkeep
 data/upload-tmp/*
+
+data/

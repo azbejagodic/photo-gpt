@@ -4,20 +4,20 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-title" content="Photo Upload" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Photo GPT Bridge" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="theme-color" content="#2563eb" />
+  <meta name="theme-color" content="#343940" />
   <link rel="manifest" href="/manifest.json" />
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
   <link rel="stylesheet" href="/styles.css" />
-  <title>Photo Upload Tray</title>
+  <title>Photo GPT Bridge</title>
 </head>
 <body>
   <main class="app">
     <section class="card">
-      <h1>Photo uploader</h1>
-      <p class="helper">Take photos one-by-one or choose many from gallery. Photos stay in your selected tray until you upload them as one batch.</p>
+      <h1>Photo GPT Bridge</h1>
+      <p class="helper">Take photos, record video, or choose from gallery. Files stay in your selected tray until you upload them as one batch.</p>
 
       <div class="actions">
         <label class="input-btn" for="cameraInput">Take photo</label>
@@ -46,7 +46,7 @@
         -->
         <input id="galleryInput" type="file" accept="image/*,video/mp4,video/quicktime,video/webm" multiple hidden />
 
-        <button id="uploadBtn" class="btn" type="button" disabled>Upload selected photos</button>
+        <button id="uploadBtn" class="btn" type="button" disabled>Upload selected files</button>
       </div>
 
       <p id="status" aria-live="polite"></p>
@@ -58,7 +58,7 @@
         <span id="selectedCount" class="count">Selected: 0 / 20</span>
       </div>
       <div id="selectedGrid" class="grid"></div>
-      <p id="selectedEmpty" class="empty">No photos selected yet.</p>
+      <p id="selectedEmpty" class="empty">No files selected yet.</p>
     </section>
 
   </main>

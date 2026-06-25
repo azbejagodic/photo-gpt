@@ -1,39 +1,15 @@
-const STORAGE_KEY = 'serverBaseUrl';
-const DEFAULT_SERVER_ORIGIN = 'http://localhost:8787';
-const LOOPBACK_FALLBACK_ORIGIN = 'http://127.0.0.1:8787';
+const API_BASE_URL = 'http://localhost:8787';
+const REFRESH_INTERVAL_MS = 2000;
 
-const serverInput = document.getElementById('serverUrl');
-const saveBtn = document.getElementById('saveBtn');
+const refreshBtn = document.getElementById('refreshBtn');
 const statusEl = document.getElementById('status');
 const gridEl = document.getElementById('grid');
+let latestImageSignature = '';
+let refreshInFlight = false;
 
 function setStatus(message, type = 'muted') {
   statusEl.textContent = message;
   statusEl.className = type;
-}
-
-function normalizeServerUrl(raw) {
-  let parsed;
-  try {
-    parsed = new URL(raw.trim());
-  } catch {
-    throw new Error('Invalid server URL. Example: http://localhost:8787');
-  }
-
-  if (!/^https?:$/.test(parsed.protocol)) {
-    throw new Error('Server URL must start with http:// or https://');
-  }
-
-  return parsed.origin;
-}
-
-function isLoopbackOrigin(origin) {
-  try {
-    const { hostname, port } = new URL(origin);
-    return port === '8787' && (hostname === 'localhost' || hostname === '127.0.0.1');
-  } catch {
-    return false;
-  }
 }
 
 function toHostPattern(origin) {
@@ -49,36 +25,6 @@ async function ensureHostPermission(origin) {
   const granted = await chrome.permissions.request({ origins: [pattern] });
   if (!granted) {
     throw new Error(`Host permission denied for ${pattern}`);
-  }
-}
-
-async function getSavedOrigin() {
-  const result = await chrome.storage.sync.get(STORAGE_KEY);
-  return result[STORAGE_KEY] || '';
-}
-
-async function getPreferredOrigin() {
-  const saved = await getSavedOrigin();
-  if (!saved) {
-    return DEFAULT_SERVER_ORIGIN;
-  }
-
-  try {
-    const normalized = normalizeServerUrl(saved);
-    return isLoopbackOrigin(normalized) ? normalized : DEFAULT_SERVER_ORIGIN;
-  } catch {
-    return DEFAULT_SERVER_ORIGIN;
-  }
-}
-
-async function saveOrigin() {
-  try {
-    const origin = normalizeServerUrl(serverInput.value);
-    await ensureHostPermission(origin);
-    await chrome.storage.sync.set({ [STORAGE_KEY]: origin });
-    setStatus(`Saved: ${origin}`, 'ok');
-  } catch (error) {
-    setStatus(error.message || 'Failed to save server URL.', 'error');
   }
 }
 
@@ -104,25 +50,6 @@ async function loadLatest(origin) {
   return json.files;
 }
 
-async function loadLatestWithLoopbackFallback(origin) {
-  try {
-    return {
-      origin,
-      files: await loadLatest(origin),
-    };
-  } catch (error) {
-    if (origin !== DEFAULT_SERVER_ORIGIN) {
-      throw error;
-    }
-
-    await ensureHostPermission(LOOPBACK_FALLBACK_ORIGIN);
-    return {
-      origin: LOOPBACK_FALLBACK_ORIGIN,
-      files: await loadLatest(LOOPBACK_FALLBACK_ORIGIN),
-    };
-  }
-}
-
 function buildImageUrl(origin, file) {
   if (file && typeof file.url === 'string' && file.url.trim().length > 0) {
     return new URL(file.url, origin).toString();
@@ -138,6 +65,16 @@ function buildImageUrl(origin, file) {
 function isVideoFile(file) {
   const extension = file?.name?.split('.').pop()?.trim().toLowerCase();
   return extension === 'mp4' || extension === 'mov' || extension === 'webm';
+}
+
+function getImageFiles(files) {
+  return files.filter((file) => !isVideoFile(file));
+}
+
+function getImageSignature(files) {
+  return files
+    .map((file) => `${file?.name || ''}|${file?.url || ''}|${file?.size ?? ''}`)
+    .join('\n');
 }
 
 async function convertImageBlobToPng(blob) {
@@ -234,7 +171,7 @@ function makeCard(origin, file) {
 
   const meta = document.createElement('div');
   meta.className = 'meta';
-  meta.textContent = `${file?.name || '(unnamed)'} (${file?.size ?? 'unknown'} bytes)`;
+  meta.textContent = file?.name || '(unnamed)';
 
   const actions = document.createElement('div');
   actions.className = 'actions';
@@ -267,29 +204,39 @@ function makeCard(origin, file) {
   return card;
 }
 
-async function refresh() {
-  gridEl.textContent = '';
+async function refresh({ showLoading = false, force = false } = {}) {
+  if (refreshInFlight) return;
+
+  refreshInFlight = true;
+  if (showLoading) {
+    setStatus('Loading...', 'muted');
+    refreshBtn.disabled = true;
+  }
+
   try {
-    const origin = normalizeServerUrl(serverInput.value || await getPreferredOrigin());
+    const origin = API_BASE_URL;
     await ensureHostPermission(origin);
 
-    setStatus('Loading...', 'muted');
-    const result = await loadLatestWithLoopbackFallback(origin);
-    const files = result.files;
-    const imageOrigin = result.origin;
+    const files = await loadLatest(origin);
+    const imageFiles = getImageFiles(files);
+    const imageOrigin = origin;
+    const nextSignature = getImageSignature(imageFiles);
 
-    if (files.length === 0) {
-      console.log('[popup] rendering count computed', { apiFilesCount: 0, renderedCount: 0 });
+    if (!force && nextSignature === latestImageSignature) {
+      setStatus('', 'muted');
+      return;
+    }
+
+    if (imageFiles.length === 0) {
+      console.log('[popup] rendering count computed', { apiFilesCount: files.length, renderedCount: 0 });
+      latestImageSignature = nextSignature;
+      gridEl.textContent = '';
       setStatus('No files found.', 'muted');
       return;
     }
 
     const fragment = document.createDocumentFragment();
-    for (const file of files) {
-      if (isVideoFile(file)) {
-        continue;
-      }
-
+    for (const file of imageFiles) {
       try {
         fragment.appendChild(makeCard(imageOrigin, file));
       } catch (error) {
@@ -304,26 +251,40 @@ async function refresh() {
     });
 
     if (!renderedCount) {
+      latestImageSignature = nextSignature;
+      gridEl.textContent = '';
       setStatus('No valid image entries found in API response.', 'error');
       return;
     }
 
+    const scrollTop = gridEl.scrollTop;
+    gridEl.textContent = '';
     gridEl.appendChild(fragment);
-    setStatus(`Loaded ${renderedCount} image(s).`, 'ok');
+    gridEl.scrollTop = scrollTop;
+    latestImageSignature = nextSignature;
+    setStatus('', 'muted');
   } catch (error) {
     console.error('[popup] refresh failed', error);
-    setStatus(error.message || 'Refresh failed.', 'error');
+    setStatus('Could not connect to Photo GPT Bridge.', 'error');
+  } finally {
+    refreshInFlight = false;
+    refreshBtn.disabled = false;
   }
 }
 
 async function init() {
   console.log('[popup] popup loaded');
 
-  serverInput.value = await getPreferredOrigin();
-
   // Popup auto-refreshes on open so users immediately see latest images.
-  await refresh();
+  await refresh({ showLoading: true, force: true });
+  setInterval(() => refresh(), REFRESH_INTERVAL_MS);
 }
 
-saveBtn.addEventListener('click', saveOrigin);
+refreshBtn.addEventListener('click', () => refresh({ showLoading: true, force: true }));
+window.addEventListener('focus', () => refresh({ force: true }));
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    refresh({ force: true });
+  }
+});
 document.addEventListener('DOMContentLoaded', init);

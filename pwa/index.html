@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Photo GPT Bridge" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -15,9 +15,8 @@
 </head>
 <body>
   <main class="app">
-    <section class="card">
+    <section class="card upload-card">
       <h1>Photo GPT Bridge</h1>
-      <p class="helper">Take photos, record video, or choose from gallery. Files stay in your selected tray until you upload them as one batch.</p>
 
       <div class="actions">
         <label class="input-btn" for="cameraInput">Take photo</label>
@@ -49,16 +48,15 @@
         <button id="uploadBtn" class="btn" type="button" disabled>Upload selected files</button>
       </div>
 
-      <p id="status" aria-live="polite"></p>
+      <p id="status" class="pwa-status" aria-live="polite"></p>
     </section>
 
-    <section class="card">
+    <section class="card tray-card">
       <div class="tray-head">
         <h2>Selected tray</h2>
         <span id="selectedCount" class="count">Selected: 0 / 20</span>
       </div>
       <div id="selectedGrid" class="grid"></div>
-      <p id="selectedEmpty" class="empty">No files selected yet.</p>
     </section>
 
   </main>

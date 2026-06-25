@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #343940;
   --bg-deep: #2d3238;
   --panel: #aeefff;
@@ -20,21 +21,38 @@
 
 * { box-sizing: border-box; }
 
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
+html {
+  height: 100%;
+  background: var(--bg);
+}
+
 body {
   margin: 0;
   min-height: 100vh;
+  min-height: 100dvh;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  background:
-    radial-gradient(circle at top left, rgba(174, 239, 255, 0.13), transparent 34rem),
-    linear-gradient(180deg, var(--bg), var(--bg-deep));
+  background: linear-gradient(145deg, var(--bg) 0%, var(--bg-deep) 100%);
   color: var(--text);
+  overflow-y: auto;
 }
 
 .app {
   width: min(100%, 700px);
+  min-height: 100vh;
+  min-height: 100dvh;
   margin: 0 auto;
-  padding: 16px;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   display: grid;
+  align-content: start;
   gap: 14px;
 }
 
@@ -44,6 +62,10 @@ body {
   border-radius: var(--radius-lg);
   padding: 16px;
   box-shadow: var(--shadow);
+}
+
+.upload-card {
+  align-self: start;
 }
 
 h1,
@@ -63,17 +85,10 @@ h2 {
   font-weight: 800;
 }
 
-.helper {
-  margin: 0 0 14px;
-  color: var(--muted);
-  font-size: 0.94rem;
-  line-height: 1.42;
-}
-
 .actions {
   display: grid;
   gap: 10px;
-  margin-bottom: 12px;
+  margin: 12px 0;
 }
 
 .btn,
@@ -126,12 +141,14 @@ h2 {
   transform: translateY(1px);
 }
 
-#status {
-  min-height: 1.4em;
-  margin: 0;
+#status,
+.pwa-status {
+  min-height: 0;
+  margin: 10px 0 0;
   color: var(--muted);
   font-size: 0.93rem;
-  font-weight: 650;
+  font-weight: 800;
+  line-height: 1.25;
 }
 
 #status.success { color: var(--success); }
@@ -156,6 +173,7 @@ h2 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+  align-content: start;
 }
 
 .tile {

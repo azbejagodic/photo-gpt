@@ -52,6 +52,9 @@ const QR_ECC_CODEWORDS = 10;
 const GF_EXP = [];
 const GF_LOG = [];
 const AUTO_REFRESH_MS = 5000;
+const MEDIA_REFRESH_TIMEOUT_MS = 10000;
+const UPLOAD_STATUS_REFRESH_MS = 750;
+const UPLOAD_LOADING_TIMEOUT_MS = 60000;
 const LIST_PAGE_SIZE = 10;
 const DEFAULT_GRID_LAYOUT = {
   columns: 3,
@@ -75,7 +78,15 @@ const FIXED_GRID_LAYOUTS = {
 let currentPhoneUrl = '';
 let dashboardRefreshInFlight = false;
 let latestPicturesRefreshPromise = null;
+let latestPicturesAbortController = null;
+let latestPicturesRequestId = 0;
 let autoRefreshTimer = null;
+let uploadStatusTimer = null;
+let uploadStatusRefreshInFlight = false;
+let lastUploadInProgress = false;
+let lastUploadVersion = null;
+let uploadLoadingStartedAt = 0;
+let uploadLoadingTimedOut = false;
 let hasLoadedPhotos = false;
 let latestFiles = [];
 let savedBatches = [];
@@ -561,6 +572,7 @@ async function downloadAllPictures() {
   downloadAllBtn.textContent = 'Downloading...';
 
   try {
+    const zipName = await getCurrentBatchZipName();
     const response = await fetch(serverUrl('/api/latest/download'));
     if (!response.ok) {
       throw new Error(`Download failed (${response.status})`);
@@ -569,7 +581,7 @@ async function downloadAllPictures() {
     const objectUrl = URL.createObjectURL(await response.blob());
     const link = document.createElement('a');
     link.href = objectUrl;
-    link.download = 'photo-gpt-latest.zip';
+    link.download = zipName;
     link.click();
     URL.revokeObjectURL(objectUrl);
   } catch (error) {
@@ -579,6 +591,39 @@ async function downloadAllPictures() {
     downloadAllBtn.disabled = false;
     downloadAllBtn.textContent = 'Download all';
   }
+}
+
+function formatBatchZipName(batchTimestamp) {
+  const date = batchTimestamp ? new Date(batchTimestamp) : new Date();
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
+  const year = safeDate.getFullYear();
+  const month = String(safeDate.getMonth() + 1).padStart(2, '0');
+  const day = String(safeDate.getDate()).padStart(2, '0');
+  const hours = String(safeDate.getHours()).padStart(2, '0');
+  const minutes = String(safeDate.getMinutes()).padStart(2, '0');
+  const seconds = String(safeDate.getSeconds()).padStart(2, '0');
+
+  return `photo-gpt_${year}-${month}-${day}_${hours}-${minutes}-${seconds}_batch.zip`;
+}
+
+async function getCurrentBatchZipName() {
+  let currentBatch = savedBatches.find((batch) => batch.current);
+
+  if (!currentBatch) {
+    try {
+      const batchData = await fetchJson('/api/batches');
+      const batches = Array.isArray(batchData.batches) ? batchData.batches : [];
+      currentBatch = batches.find((batch) => batch.current);
+      if (batches.length) {
+        savedBatches = batches;
+        renderBatches();
+      }
+    } catch {
+      // Fall back to the current local time if batch metadata is unavailable.
+    }
+  }
+
+  return formatBatchZipName(currentBatch?.createdAt);
 }
 
 function setPicturesMessage(message) {
@@ -1042,6 +1087,64 @@ function renderEmptyState(title, text, state = 'empty') {
   emptyState.hidden = false;
 }
 
+function renderMediaLoading() {
+  photoGrid.innerHTML = '';
+  photoGrid.className = 'media-loading';
+  photoGrid.style.removeProperty('--grid-columns');
+  photoGrid.style.removeProperty('--grid-rows');
+  emptyState.hidden = true;
+  if (picturePagination) {
+    picturePagination.hidden = true;
+  }
+
+  const loading = document.createElement('div');
+  loading.className = 'loading-state';
+  loading.textContent = 'Loading media...';
+  photoGrid.appendChild(loading);
+}
+
+function waitForNextPaint() {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+async function waitForMinimumLoadingTime(startedAt, minimumMs = 400) {
+  const elapsed = Date.now() - startedAt;
+  const remaining = Math.max(0, minimumMs - elapsed);
+  if (remaining > 0) {
+    await new Promise((resolve) => window.setTimeout(resolve, remaining));
+  }
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = MEDIA_REFRESH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  const externalSignal = options.signal;
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+  }
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error('Could not load media. Try Refresh again.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 function getGridCountTarget() {
   return gridCountSetting === 'auto' ? null : Number(gridCountSetting);
 }
@@ -1343,17 +1446,38 @@ async function loadServerStatus({ showActivity = false } = {}) {
 
 async function loadLatestPictures({ source = 'manual', force = false } = {}) {
   if (latestPicturesRefreshPromise) {
-    if (source === 'manual') {
-      await latestPicturesRefreshPromise;
-      return loadLatestPictures({ source: 'manual', force });
+    if (source !== 'manual') {
+      return latestPicturesRefreshPromise;
     }
-    return latestPicturesRefreshPromise;
+
+    latestPicturesAbortController?.abort();
   }
 
-  const showActivity = source === 'manual' || source === 'initial';
+  const requestId = latestPicturesRequestId + 1;
+  latestPicturesRequestId = requestId;
+  const requestController = new AbortController();
+  latestPicturesAbortController = requestController;
 
   latestPicturesRefreshPromise = (async () => {
+    const isCurrentRequest = () => requestId === latestPicturesRequestId;
     photoGrid.setAttribute('aria-busy', 'true');
+
+    const showActivity = source === 'manual' || source === 'initial';
+    const shouldShowLoadingBeforeFetch = source === 'manual' || force;
+    let loadingStartedAt = 0;
+
+    const showLoading = async () => {
+      loadingStartedAt = Date.now();
+      renderMediaLoading();
+      await waitForNextPaint();
+    };
+
+    if (shouldShowLoadingBeforeFetch) {
+      await showLoading();
+      if (!isCurrentRequest()) {
+        return latestFiles;
+      }
+    }
 
     if (showActivity && photoSummary) {
       photoSummary.textContent = 'Refreshing pictures...';
@@ -1361,52 +1485,87 @@ async function loadLatestPictures({ source = 'manual', force = false } = {}) {
     }
 
     try {
-      const response = await fetch(serverUrl('/api/latest'));
+      const response = await fetchWithTimeout(serverUrl('/api/latest'), {
+        signal: requestController.signal,
+      });
       if (!response.ok) {
         throw new Error(`Photo request failed (${response.status})`);
       }
       const data = await response.json();
+      if (!isCurrentRequest()) {
+        return latestFiles;
+      }
+
       const files = getAppFiles(Array.isArray(data.files) ? data.files : []);
       const didPicturesChange = !arePictureListsEqual(latestFiles, files);
+
+      if (loadingStartedAt) {
+        await waitForMinimumLoadingTime(loadingStartedAt);
+        if (!isCurrentRequest()) {
+          return latestFiles;
+        }
+      }
 
       if (force || !hasLoadedPhotos || didPicturesChange) {
         latestFiles = files;
         renderPictures(files);
       } else if (picturesMessage.textContent === 'Could not refresh pictures') {
         picturesMessage.hidden = true;
+        if (loadingStartedAt) {
+          renderPictures(latestFiles);
+        }
+      } else if (loadingStartedAt) {
+        renderPictures(latestFiles);
       }
 
       hasLoadedPhotos = true;
       renderStatus();
       return files;
     } catch (error) {
+      if (!isCurrentRequest()) {
+        return latestFiles;
+      }
+      if (loadingStartedAt) {
+        await waitForMinimumLoadingTime(loadingStartedAt);
+        if (!isCurrentRequest()) {
+          return latestFiles;
+        }
+      }
       if (!hasLoadedPhotos && latestFiles.length === 0) {
         photoGrid.innerHTML = '';
         renderEmptyState(
-          'Could not load pictures',
-          'The desktop app will keep trying. Check that the local server is running.',
+          'Could not load media',
+          'Try Refresh again.',
           'error',
         );
       }
       if (hasLoadedPhotos || latestFiles.length > 0) {
-        picturesMessage.textContent = 'Could not refresh pictures';
+        if (loadingStartedAt) {
+          renderPictures(latestFiles);
+        }
+        picturesMessage.textContent = error.message || 'Could not load media. Try Refresh again.';
         picturesMessage.hidden = false;
       } else if (photoSummary) {
-        photoSummary.textContent = 'Could not load pictures';
+        photoSummary.textContent = 'Could not load media';
         photoSummary.className = 'summary error';
-        photoSummary.title = error.message || 'Could not load pictures.';
+        photoSummary.title = error.message || 'Could not load media. Try Refresh again.';
       }
-      renderStatus({ state: 'offline', message: error.message || 'Pictures could not load.' });
+      renderStatus({ state: 'offline', message: error.message || 'Could not load media. Try Refresh again.' });
       return [];
     } finally {
-      photoGrid.removeAttribute('aria-busy');
+      if (isCurrentRequest()) {
+        photoGrid.removeAttribute('aria-busy');
+      }
     }
   })();
 
   try {
     return await latestPicturesRefreshPromise;
   } finally {
-    latestPicturesRefreshPromise = null;
+    if (requestId === latestPicturesRequestId) {
+      latestPicturesRefreshPromise = null;
+      latestPicturesAbortController = null;
+    }
   }
 }
 
@@ -1417,6 +1576,9 @@ function setDashboardRefreshBusy(isBusy) {
 
 async function refreshDashboard({ source = 'manual' } = {}) {
   if (dashboardRefreshInFlight) {
+    if (source === 'manual') {
+      await loadLatestPictures({ source: 'manual', force: true });
+    }
     return;
   }
 
@@ -1442,8 +1604,113 @@ async function refreshDashboard({ source = 'manual' } = {}) {
   }
 }
 
+function showUploadLoading() {
+  if (!uploadLoadingStartedAt) {
+    uploadLoadingStartedAt = Date.now();
+  }
+
+  if (uploadLoadingTimedOut) {
+    return;
+  }
+
+  photoGrid.setAttribute('aria-busy', 'true');
+  renderMediaLoading();
+}
+
+function stopUploadLoading() {
+  uploadLoadingStartedAt = 0;
+  uploadLoadingTimedOut = false;
+  photoGrid.removeAttribute('aria-busy');
+}
+
+function handleUploadLoadingTimeout() {
+  if (
+    uploadLoadingTimedOut
+    || !uploadLoadingStartedAt
+    || Date.now() - uploadLoadingStartedAt < UPLOAD_LOADING_TIMEOUT_MS
+  ) {
+    return;
+  }
+
+  uploadLoadingTimedOut = true;
+  photoGrid.removeAttribute('aria-busy');
+  if (hasLoadedPhotos || latestFiles.length > 0) {
+    renderPictures(latestFiles);
+    picturesMessage.textContent = 'Upload is taking longer than expected. Try Refresh again.';
+    picturesMessage.hidden = false;
+    return;
+  }
+
+  renderEmptyState('Could not load media', 'Upload is taking longer than expected. Try Refresh again.', 'error');
+}
+
+async function refreshUploadStatus() {
+  if (uploadStatusRefreshInFlight || document.hidden) {
+    return;
+  }
+
+  uploadStatusRefreshInFlight = true;
+  try {
+    const response = await fetchWithTimeout(serverUrl('/api/upload-status'), {}, 5000);
+    if (!response.ok) {
+      throw new Error(`Upload status request failed (${response.status})`);
+    }
+    const status = await response.json();
+    const uploadInProgress = Boolean(status.uploadInProgress);
+    const uploadVersion = Number.isFinite(status.uploadVersion) ? status.uploadVersion : 0;
+    const previousUploadInProgress = lastUploadInProgress;
+    const previousUploadVersion = lastUploadVersion;
+
+    if (lastUploadVersion === null) {
+      lastUploadVersion = uploadVersion;
+    }
+
+    if (uploadInProgress) {
+      lastUploadInProgress = true;
+      showUploadLoading();
+      handleUploadLoadingTimeout();
+      return;
+    }
+
+    lastUploadInProgress = false;
+    const didUploadFinish = previousUploadInProgress || (
+      previousUploadVersion !== null && uploadVersion > previousUploadVersion
+    );
+    lastUploadVersion = uploadVersion;
+
+    if (didUploadFinish) {
+      stopUploadLoading();
+      await loadLatestPictures({ source: 'upload-complete', force: true });
+    }
+  } catch (_error) {
+    if (lastUploadInProgress && !uploadLoadingTimedOut) {
+      handleUploadLoadingTimeout();
+    }
+  } finally {
+    uploadStatusRefreshInFlight = false;
+  }
+}
+
+function startUploadStatusRefresh() {
+  if (uploadStatusTimer !== null || document.hidden) {
+    return;
+  }
+
+  refreshUploadStatus();
+  uploadStatusTimer = window.setInterval(refreshUploadStatus, UPLOAD_STATUS_REFRESH_MS);
+}
+
+function stopUploadStatusRefresh() {
+  if (uploadStatusTimer === null) {
+    return;
+  }
+
+  window.clearInterval(uploadStatusTimer);
+  uploadStatusTimer = null;
+}
+
 function runAutoRefresh() {
-  if (!document.hidden) {
+  if (!document.hidden && !lastUploadInProgress) {
     loadLatestPictures({ source: 'auto' });
   }
 }
@@ -1589,14 +1856,19 @@ if (copyPhoneUrlBtn) {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     stopAutoRefresh();
+    stopUploadStatusRefresh();
     return;
   }
 
   loadLatestPictures({ source: 'auto' });
+  startUploadStatusRefresh();
   startAutoRefresh();
 });
 
-window.addEventListener('pagehide', stopAutoRefresh);
+window.addEventListener('pagehide', () => {
+  stopAutoRefresh();
+  stopUploadStatusRefresh();
+});
 
 if (window.ResizeObserver) {
   const gridResizeObserver = new ResizeObserver(handleGridResize);
@@ -1606,4 +1878,5 @@ if (window.ResizeObserver) {
 }
 
 refreshDashboard({ source: 'initial' });
+startUploadStatusRefresh();
 startAutoRefresh();

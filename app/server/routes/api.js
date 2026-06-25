@@ -106,16 +106,64 @@ const createZipBuffer = async (files) => {
   return Buffer.concat([...localParts, ...centralParts, endRecord]);
 };
 
+const padDatePart = (value) => String(value).padStart(2, '0');
+
+const formatBatchZipName = (batchTimestamp) => {
+  const date = batchTimestamp ? new Date(batchTimestamp) : new Date();
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
+  const year = safeDate.getFullYear();
+  const month = padDatePart(safeDate.getMonth() + 1);
+  const day = padDatePart(safeDate.getDate());
+  const hours = padDatePart(safeDate.getHours());
+  const minutes = padDatePart(safeDate.getMinutes());
+  const seconds = padDatePart(safeDate.getSeconds());
+
+  return `photo-gpt_${year}-${month}-${day}_${hours}-${minutes}-${seconds}_batch.zip`;
+};
+
+const uploadStatus = {
+  uploadInProgress: false,
+  lastUploadStartedAt: null,
+  lastUploadFinishedAt: null,
+  uploadVersion: 0,
+};
+
+const markUploadStarted = (_req, res, next) => {
+  uploadStatus.uploadInProgress = true;
+  uploadStatus.lastUploadStartedAt = Date.now();
+  uploadStatus.lastUploadFinishedAt = null;
+
+  let didFinish = false;
+  const markUploadFinished = () => {
+    if (didFinish) {
+      return;
+    }
+
+    didFinish = true;
+    uploadStatus.uploadInProgress = false;
+    uploadStatus.lastUploadFinishedAt = Date.now();
+    uploadStatus.uploadVersion += 1;
+  };
+
+  res.once('finish', markUploadFinished);
+  res.once('close', markUploadFinished);
+  next();
+};
+
 const createApiRouter = ({ getServerStatus }) => {
   const router = Router();
 
-  router.post('/upload', upload.array('photos', MAX_FILES), validateUploadedFiles, uploadErrorHandler, async (req, res, next) => {
+  router.post('/upload', markUploadStarted, upload.array('photos', MAX_FILES), validateUploadedFiles, uploadErrorHandler, async (req, res, next) => {
     try {
       const files = await finalizeUploadedBatch(req);
       res.json({ files });
     } catch (err) {
       next(err);
     }
+  });
+
+  router.get('/upload-status', (_req, res) => {
+    res.json(uploadStatus);
   });
 
   router.get('/latest', async (_req, res, next) => {
@@ -135,9 +183,11 @@ const createApiRouter = ({ getServerStatus }) => {
         return;
       }
 
+      const currentBatch = (await listBatches()).find((batch) => batch.current);
       const zipBuffer = await createZipBuffer(files);
+      const zipName = formatBatchZipName(currentBatch?.createdAt);
       res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', 'attachment; filename="photo-gpt-latest.zip"');
+      res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
       res.setHeader('Content-Length', String(zipBuffer.length));
       res.send(zipBuffer);
     } catch (err) {

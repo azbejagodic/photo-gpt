@@ -7,11 +7,11 @@ const uploadBtn = document.getElementById('uploadBtn');
 const statusEl = document.getElementById('status');
 
 const selectedGrid = document.getElementById('selectedGrid');
-const selectedEmpty = document.getElementById('selectedEmpty');
 const selectedCount = document.getElementById('selectedCount');
 
 // File inputs expose a transient, read-only FileList, so this array is the tray's source of truth.
 let selectedFiles = [];
+let hasEverSelectedFiles = false;
 
 function setStatus(message, kind = '') {
   statusEl.textContent = message;
@@ -127,14 +127,13 @@ function renderSelectedTray() {
       selectedFiles.splice(index, 1);
       renderSelectedTray();
       updateSelectedCount();
-      if (selectedFiles.length === 0) setStatus('Selected tray is empty.');
+      if (selectedFiles.length === 0) setStatus('Tray is empty.');
     });
 
     tile.appendChild(removeBtn);
     selectedGrid.appendChild(tile);
   });
 
-  selectedEmpty.hidden = selectedFiles.length > 0;
 }
 
 function appendFiles(fileList) {
@@ -148,6 +147,11 @@ function appendFiles(fileList) {
 
   const availableSlots = MAX_FILES - selectedFiles.length;
   const acceptedFiles = files.slice(0, availableSlots);
+  if (acceptedFiles.length === 0) {
+    return;
+  }
+
+  hasEverSelectedFiles = true;
   selectedFiles.push(...acceptedFiles);
 
   if (acceptedFiles.length < files.length) {
@@ -212,3 +216,6 @@ uploadBtn.addEventListener('click', async () => {
 
 updateSelectedCount();
 renderSelectedTray();
+if (!hasEverSelectedFiles && selectedFiles.length === 0) {
+  setStatus('No files selected yet.');
+}

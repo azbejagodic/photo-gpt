@@ -55,9 +55,11 @@ const DEFAULT_GRID_LAYOUT = {
   columns: 3,
   rows: 2,
   pageSize: 6,
+  cardHeight: 150,
 };
 const GRID_GAP = 12;
 const GRID_MIN_CARD_WIDTH = 160;
+const GRID_MIN_CARD_HEIGHT = 96;
 const PICTURES_VIEW_KEY = 'photoGptPicturesView';
 
 let currentPhoneUrl = '';
@@ -1033,6 +1035,7 @@ function calculateGridLayout() {
   }
 
   const width = photoGrid.clientWidth;
+  const height = photoGrid.clientHeight;
   if (width <= 0) {
     return gridLayout;
   }
@@ -1042,10 +1045,14 @@ function calculateGridLayout() {
     ? DEFAULT_GRID_LAYOUT.columns
     : Math.max(DEFAULT_GRID_LAYOUT.columns, Math.floor((width + GRID_GAP) / (GRID_MIN_CARD_WIDTH + GRID_GAP)));
   const rows = DEFAULT_GRID_LAYOUT.rows;
+  const cardHeight = height > 0
+    ? Math.max(GRID_MIN_CARD_HEIGHT, Math.floor((height - GRID_GAP * (rows - 1)) / rows))
+    : DEFAULT_GRID_LAYOUT.cardHeight;
 
   return {
     columns,
     rows,
+    cardHeight,
     pageSize: Math.max(1, columns * rows),
   };
 }
@@ -1058,6 +1065,7 @@ function applyGridLayout() {
   gridLayout = calculateGridLayout();
   photoGrid.style.setProperty('--grid-columns', String(gridLayout.columns));
   photoGrid.style.setProperty('--grid-rows', String(gridLayout.rows));
+  photoGrid.style.setProperty('--grid-card-height', `${gridLayout.cardHeight}px`);
 }
 
 function getPicturesPageSize() {
@@ -1426,12 +1434,14 @@ function handleGridResize() {
   const previousPageSize = gridLayout.pageSize;
   const previousColumns = gridLayout.columns;
   const previousRows = gridLayout.rows;
+  const previousCardHeight = gridLayout.cardHeight;
   applyGridLayout();
 
   if (
     gridLayout.pageSize !== previousPageSize
     || gridLayout.columns !== previousColumns
     || gridLayout.rows !== previousRows
+    || gridLayout.cardHeight !== previousCardHeight
   ) {
     renderPictures(latestFiles);
   }

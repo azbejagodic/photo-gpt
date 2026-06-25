@@ -502,11 +502,13 @@ h3 {
 }
 
 .photo-grid {
+  height: 100%;
   min-height: 0;
   overflow: hidden;
   display: grid;
   grid-template-columns: repeat(var(--grid-columns, 3), minmax(0, 1fr));
-  grid-template-rows: repeat(var(--grid-rows, 2), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--grid-rows, 2), var(--grid-card-height, minmax(120px, 1fr)));
+  align-content: stretch;
   gap: var(--grid-gap, 12px);
 }
 
@@ -527,7 +529,7 @@ h3 {
 
 .photo-card {
   min-width: 0;
-  height: 100%;
+  height: var(--grid-card-height, 100%);
   min-height: 0;
   overflow: hidden;
   position: relative;

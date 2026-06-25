@@ -29,6 +29,8 @@ const downloadAllBtn = document.getElementById('downloadAllBtn');
 const picturesMessage = document.getElementById('picturesMessage');
 const gridViewBtn = document.getElementById('gridViewBtn');
 const listViewBtn = document.getElementById('listViewBtn');
+const gridCountSelect = document.getElementById('gridCountSelect');
+const gridCountControl = document.querySelector('.grid-count-control');
 const batchesBtn = document.getElementById('batchesBtn');
 const batchesPanel = document.getElementById('batchesPanel');
 const batchesList = document.getElementById('batchesList');
@@ -55,12 +57,20 @@ const DEFAULT_GRID_LAYOUT = {
   columns: 3,
   rows: 2,
   pageSize: 6,
-  cardHeight: 150,
 };
 const GRID_GAP = 12;
 const GRID_MIN_CARD_WIDTH = 160;
 const GRID_MIN_CARD_HEIGHT = 96;
 const PICTURES_VIEW_KEY = 'photoGptPicturesView';
+const GRID_COUNT_KEY = 'photoGptGridCount';
+const GRID_COUNT_OPTIONS = ['auto', '4', '8', '12', '16'];
+const DEFAULT_GRID_COUNT = '8';
+const FIXED_GRID_LAYOUTS = {
+  4: { columns: 2, rows: 2 },
+  8: { columns: 4, rows: 2 },
+  12: { columns: 4, rows: 3 },
+  16: { columns: 4, rows: 4 },
+};
 
 let currentPhoneUrl = '';
 let dashboardRefreshInFlight = false;
@@ -73,6 +83,9 @@ let batchesRefreshPromise = null;
 let currentPicturesPage = 0;
 let gridLayout = { ...DEFAULT_GRID_LAYOUT };
 let picturesView = localStorage.getItem(PICTURES_VIEW_KEY) === 'list' ? 'list' : 'grid';
+let gridCountSetting = GRID_COUNT_OPTIONS.includes(localStorage.getItem(GRID_COUNT_KEY))
+  ? localStorage.getItem(GRID_COUNT_KEY)
+  : DEFAULT_GRID_COUNT;
 let lastServerStatusData = null;
 let statusLastCheckedAt = null;
 const launchParams = new URLSearchParams(window.location.search);
@@ -1029,6 +1042,26 @@ function renderEmptyState(title, text, state = 'empty') {
   emptyState.hidden = false;
 }
 
+function getGridCountTarget() {
+  return gridCountSetting === 'auto' ? null : Number(gridCountSetting);
+}
+
+function updateGridCountControl() {
+  if (!gridCountSelect) {
+    return;
+  }
+
+  gridCountSelect.value = gridCountSetting;
+  gridCountSelect.disabled = false;
+  if (gridCountControl) {
+    gridCountControl.hidden = picturesView !== 'grid';
+  }
+}
+
+function calculateFixedGridDimensions(targetCount) {
+  return FIXED_GRID_LAYOUTS[targetCount] || DEFAULT_GRID_LAYOUT;
+}
+
 function calculateGridLayout() {
   if (picturesView !== 'grid') {
     return gridLayout;
@@ -1041,19 +1074,23 @@ function calculateGridLayout() {
   }
 
   const historyOpen = Boolean(batchesPanel && !batchesPanel.hidden);
-  const columns = historyOpen
+  const maxColumns = historyOpen
     ? DEFAULT_GRID_LAYOUT.columns
-    : Math.max(DEFAULT_GRID_LAYOUT.columns, Math.floor((width + GRID_GAP) / (GRID_MIN_CARD_WIDTH + GRID_GAP)));
-  const rows = DEFAULT_GRID_LAYOUT.rows;
-  const cardHeight = height > 0
-    ? Math.max(GRID_MIN_CARD_HEIGHT, Math.floor((height - GRID_GAP * (rows - 1)) / rows))
-    : DEFAULT_GRID_LAYOUT.cardHeight;
+    : Math.max(1, Math.floor((width + GRID_GAP) / (GRID_MIN_CARD_WIDTH + GRID_GAP)));
+  const maxRows = historyOpen
+    ? DEFAULT_GRID_LAYOUT.rows
+    : Math.max(1, Math.floor((height + GRID_GAP) / (GRID_MIN_CARD_HEIGHT + GRID_GAP)));
+  const targetCount = getGridCountTarget();
+  const dimensions = targetCount
+    ? calculateFixedGridDimensions(targetCount)
+    : { columns: maxColumns, rows: maxRows };
+  const columns = Math.max(1, dimensions.columns);
+  const rows = Math.max(1, dimensions.rows);
 
   return {
     columns,
     rows,
-    cardHeight,
-    pageSize: Math.max(1, columns * rows),
+    pageSize: Math.max(1, targetCount ? Math.min(targetCount, columns * rows) : columns * rows),
   };
 }
 
@@ -1065,7 +1102,6 @@ function applyGridLayout() {
   gridLayout = calculateGridLayout();
   photoGrid.style.setProperty('--grid-columns', String(gridLayout.columns));
   photoGrid.style.setProperty('--grid-rows', String(gridLayout.rows));
-  photoGrid.style.setProperty('--grid-card-height', `${gridLayout.cardHeight}px`);
 }
 
 function getPicturesPageSize() {
@@ -1098,6 +1134,7 @@ function updateViewToggle() {
   listViewBtn.classList.toggle('active', picturesView === 'list');
   gridViewBtn.setAttribute('aria-pressed', String(picturesView === 'grid'));
   listViewBtn.setAttribute('aria-pressed', String(picturesView === 'list'));
+  updateGridCountControl();
 }
 
 function createVideoPlaceholder(className = '') {
@@ -1434,14 +1471,12 @@ function handleGridResize() {
   const previousPageSize = gridLayout.pageSize;
   const previousColumns = gridLayout.columns;
   const previousRows = gridLayout.rows;
-  const previousCardHeight = gridLayout.cardHeight;
   applyGridLayout();
 
   if (
     gridLayout.pageSize !== previousPageSize
     || gridLayout.columns !== previousColumns
     || gridLayout.rows !== previousRows
-    || gridLayout.cardHeight !== previousCardHeight
   ) {
     renderPictures(latestFiles);
   }
@@ -1475,6 +1510,17 @@ downloadAllBtn.addEventListener('click', downloadAllPictures);
 batchesBtn?.addEventListener('click', toggleBatchesPanel);
 saveRetentionBtn?.addEventListener('click', saveRetentionSetting);
 clearBatchesBtn?.addEventListener('click', clearAllBatches);
+gridCountSelect?.addEventListener('change', () => {
+  if (!GRID_COUNT_OPTIONS.includes(gridCountSelect.value)) {
+    return;
+  }
+
+  gridCountSetting = gridCountSelect.value;
+  localStorage.setItem(GRID_COUNT_KEY, gridCountSetting);
+  currentPicturesPage = 0;
+  applyGridLayout();
+  renderPictures(latestFiles);
+});
 
 gridViewBtn.addEventListener('click', () => {
   if (picturesView === 'grid') {

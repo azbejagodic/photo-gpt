@@ -81,9 +81,16 @@ h1 {
   color: #f4fdff;
   font-size: 1.42rem;
   font-weight: 850;
-  letter-spacing: 0.095em;
+  letter-spacing: 0;
   line-height: 1;
-  text-transform: uppercase;
+}
+
+.brand {
+  white-space: nowrap;
+}
+
+.brand-lan {
+  color: #7cf4c6;
 }
 
 h2 {

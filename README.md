@@ -1,11 +1,11 @@
-# Photo GPT
+# SnapOverLAN
 
-Photo GPT is a local phone-to-PC photo bridge for ChatGPT. Photos stay on the local network and each new upload replaces the previous batch.
+SnapOverLAN is a local phone-to-PC media bridge. Photos and videos stay on your LAN, and each successful upload becomes the current batch. It is useful for ChatGPT image workflows, browser clipboard workflows, or any local process that accepts pasted, opened, or downloaded media.
 
 The product has three user-facing parts:
 
-1. **App** - the native Electron application that starts and manages the local LAN server and displays the application UI.
-2. **Extension** - the Chrome/Brave extension that fetches the latest photos and copies them to the clipboard for pasting into ChatGPT.
+1. **App** - the native Electron application that starts and manages the local LAN server and displays the desktop UI.
+2. **Extension** - the Chrome/Brave extension that fetches the latest images and copies them to the clipboard for pasting into ChatGPT or another image-aware workflow.
 3. **PWA** - the phone upload web app served over the local network.
 
 The Express server is an internal part of the App, not a separate product.
@@ -47,19 +47,19 @@ The local server listens on `0.0.0.0:8787` so the phone can connect over the LAN
 
 ## App
 
-The App opens the Photo GPT UI in its Electron window. It reuses a compatible server already running on port 8787 or starts and manages its own server process.
+The App opens the SnapOverLAN UI in its Electron window. It reuses a compatible server already running on port 8787 or starts and manages its own server process.
 
 The App UI provides:
 
 - The phone upload URL
 - A QR code for opening the PWA
 - Server and LAN diagnostics
-- The latest uploaded photo batch
-- Open and Download actions for each photo
+- Saved upload batches
+- Open, copy, delete, and download actions for uploaded media
 
 The UI is an internal Electron renderer under `app/renderer/`. It is not served as a browser page.
 
-In development, uploads use `data/latest/` and temporary staging uses `data/upload-tmp/`. Packaged builds use the Electron user-data directory, so uploaded photos are not stored in the installation directory or included in later builds.
+In development, uploads use `data/latest/`, `data/batches/`, and temporary staging uses `data/upload-tmp/`. Packaged builds use the Electron user-data directory, so uploaded media is not stored in the installation directory or included in later builds.
 
 ## PWA
 
@@ -72,11 +72,12 @@ http://192.168.1.16:8787
 The PWA lets the user:
 
 - Take photos one at a time
-- Select multiple photos from the gallery
-- Review and remove photos from the selected tray
-- Upload up to 20 images as one batch
+- Record videos one at a time
+- Select multiple photos or supported videos from the gallery
+- Review and remove media from the selected tray
+- Upload up to 20 files as one batch
 
-Each uploaded image must be no larger than 12 MB. Every successful upload batch replaces the previous batch.
+Each uploaded image must be no larger than 12 MB. Each uploaded video must be no larger than 100 MB. Supported video formats are MP4, MOV, and WebM.
 
 ### PWA installation
 
@@ -101,13 +102,13 @@ The extension defaults to:
 http://localhost:8787
 ```
 
-When opened, it fetches the latest uploaded images. The Copy action converts the selected image to PNG and writes it to the clipboard so it can be pasted into ChatGPT. The Open action opens the source image in a browser tab.
+When opened, it fetches the latest uploaded images. The Copy action converts the selected image to PNG and writes it to the clipboard so it can be pasted into ChatGPT or any compatible destination. The Open action opens the source image in a browser tab.
 
 ## Windows firewall
 
 The Setup installer creates this inbound firewall rule:
 
-- Rule name: `Photo GPT LAN Upload`
+- Rule name: `SnapOverLAN LAN Upload`
 - Protocol: TCP
 - Local port: 8787
 - Profile: Private only
@@ -126,17 +127,17 @@ If the phone cannot connect:
 
 The App, PWA, and Extension use these internal local-server routes:
 
-- `POST /api/upload` - uploads a multipart image batch using field name `photos`
-- `GET /api/latest` - returns the current image batch
+- `POST /api/upload` - uploads a multipart media batch using field name `photos`
+- `GET /api/latest` - returns the current media batch
 - `GET /api/phone-url` - returns detected LAN URLs for the App
 - `GET /api/server-status` - returns server and LAN diagnostics
-- `GET /files/<filename>` - serves an uploaded image
+- `GET /files/<filename>` - serves an uploaded file
 - `GET /` - serves the phone PWA
 
 ## Project structure
 
 ```text
-photo-gpt/
+SnapOverLAN/
   app/
     main.js
     server/
@@ -170,6 +171,18 @@ photo-gpt/
   package-lock.json
   README.md
 ```
+
+## Environment
+
+SnapOverLAN uses `SNAPOVERLAN_*` environment variables for runtime coordination:
+
+- `SNAPOVERLAN_DATA_DIR`
+- `SNAPOVERLAN_LOG_FILE`
+- `SNAPOVERLAN_PARENT_PID`
+- `SNAPOVERLAN_PACKAGED`
+- `SNAPOVERLAN_SERVER_SOURCE`
+
+Legacy `PHOTO_GPT_*` names are still accepted as fallbacks for existing developer scripts and installed workflows.
 
 ## Technology
 

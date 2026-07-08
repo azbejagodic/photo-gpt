@@ -1,7 +1,7 @@
 {
-  "name": "photo-gpt",
+  "name": "snap-over-lan",
   "version": "1.0.0",
-  "description": "Local home LAN photo bridge between phone and ChatGPT",
+  "description": "Local LAN media transfer bridge between phone and PC",
   "type": "module",
   "main": "app/main.js",
   "scripts": {
@@ -21,8 +21,8 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "local.photogpt.app",
-    "productName": "Photo GPT",
+    "appId": "local.snapoverlan.app",
+    "productName": "SnapOverLAN",
     "asar": false,
     "directories": {
       "output": "dist"
@@ -59,7 +59,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Photo GPT",
+      "shortcutName": "SnapOverLAN",
       "include": "build/installer.nsh",
       "artifactName": "${productName} Setup ${version}-${arch}.${ext}"
     },

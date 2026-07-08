@@ -15,7 +15,7 @@ const PORT = 8787;
 const SERVER_ORIGIN = `http://localhost:${PORT}`;
 const SERVER_STATUS_URL = `${SERVER_ORIGIN}/api/server-status`;
 
-electronApp.setName('Photo GPT');
+electronApp.setName('SnapOverLAN');
 
 let mainWindow = null;
 let ownedServerProcess = null;
@@ -73,7 +73,7 @@ const writeStartupLog = async (event, details = {}) => {
     ...details,
   };
 
-  console.log('Photo GPT startup:', record);
+  console.log('SnapOverLAN startup:', record);
   await fs.mkdir(path.dirname(logPath), { recursive: true });
   await fs.appendFile(logPath, `${JSON.stringify(record)}\n`);
 };
@@ -120,6 +120,10 @@ const ensureServer = async () => {
   const logPath = getStartupLogPath();
   const childEnv = {
     ...process.env,
+    SNAPOVERLAN_PARENT_PID: String(process.pid),
+    SNAPOVERLAN_LOG_FILE: logPath,
+    SNAPOVERLAN_SERVER_SOURCE: isPackaged ? 'electron-packaged-child' : 'electron-dev-child',
+    // Legacy PHOTO_GPT_* names keep older developer scripts and installs working.
     PHOTO_GPT_PARENT_PID: String(process.pid),
     PHOTO_GPT_LOG_FILE: logPath,
     PHOTO_GPT_SERVER_SOURCE: isPackaged ? 'electron-packaged-child' : 'electron-dev-child',
@@ -127,6 +131,8 @@ const ensureServer = async () => {
 
   if (isPackaged) {
     childEnv.ELECTRON_RUN_AS_NODE = '1';
+    childEnv.SNAPOVERLAN_DATA_DIR = runtimeDataRoot;
+    childEnv.SNAPOVERLAN_PACKAGED = '1';
     childEnv.PHOTO_GPT_DATA_DIR = runtimeDataRoot;
     childEnv.PHOTO_GPT_PACKAGED = '1';
   }
@@ -149,7 +155,7 @@ const ensureServer = async () => {
 
   ownedServerProcess.once('exit', (code, signal) => {
     if (ownedServerProcess) {
-      console.error(`Photo GPT server process exited early (${signal || code}).`);
+      console.error(`SnapOverLAN server process exited early (${signal || code}).`);
       writeStartupLog('server-exited-early', { code, signal }).catch(() => {});
       ownedServerProcess = null;
     }
@@ -183,7 +189,7 @@ const createWindow = async () => {
     height: 600,
     minWidth: 860,
     minHeight: 540,
-    title: 'Photo GPT',
+    title: 'SnapOverLAN',
     backgroundColor: '#343940',
     autoHideMenuBar: true,
     webPreferences: {
@@ -200,7 +206,7 @@ const createWindow = async () => {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
-          title: 'Photo GPT',
+          title: 'SnapOverLAN',
           width: 1000,
           height: 760,
           autoHideMenuBar: true,
@@ -251,7 +257,7 @@ if (!gotLock) {
       await ensureServer();
       await createWindow();
     } catch (err) {
-      dialog.showErrorBox('Photo GPT could not start', err.message || String(err));
+      dialog.showErrorBox('SnapOverLAN could not start', err.message || String(err));
       electronApp.quit();
     }
   });

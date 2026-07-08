@@ -54,6 +54,14 @@ h1 {
   letter-spacing: 0;
 }
 
+.brand {
+  white-space: nowrap;
+}
+
+.brand-lan {
+  color: #087c66;
+}
+
 button {
   min-height: 34px;
   border: 1px solid rgba(13, 28, 38, 0.12);

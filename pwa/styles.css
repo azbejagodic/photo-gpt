@@ -85,6 +85,14 @@ h2 {
   font-weight: 800;
 }
 
+.brand {
+  white-space: nowrap;
+}
+
+.brand-lan {
+  color: #087c66;
+}
+
 .actions {
   display: grid;
   gap: 10px;

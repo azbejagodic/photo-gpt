@@ -1,6 +1,6 @@
 {
-  "name": "Photo Upload Tray",
-  "short_name": "Photo Upload",
+  "name": "SnapOverLAN",
+  "short_name": "SnapOverLAN",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

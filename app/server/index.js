@@ -83,9 +83,9 @@ const startServer = async ({ host = HOST, port = PORT, log = true } = {}) => {
       serverInstance = server;
       const status = getServerStatus();
       if (log) {
-        console.log(`Photo bridge listening on http://${host}:${port}`);
-        console.log(`Photo GPT runtime data: ${DATA_ROOT}`);
-        console.log(`Photo GPT LAN URLs: ${status.lanUrls.map((item) => item.url).join(', ') || 'none detected'}`);
+        console.log(`SnapOverLAN listening on http://${host}:${port}`);
+        console.log(`SnapOverLAN runtime data: ${DATA_ROOT}`);
+        console.log(`SnapOverLAN LAN URLs: ${status.lanUrls.map((item) => item.url).join(', ') || 'none detected'}`);
       }
       appendStartupLog('server-listening', status).catch((err) => {
         console.warn('Could not write startup diagnostics:', err);
@@ -115,7 +115,8 @@ const stopServer = async () => {
 };
 
 const watchParentProcess = () => {
-  const parentPid = Number(process.env.PHOTO_GPT_PARENT_PID);
+  // PHOTO_GPT_PARENT_PID is a legacy fallback for pre-rename Electron launches.
+  const parentPid = Number(process.env.SNAPOVERLAN_PARENT_PID || process.env.PHOTO_GPT_PARENT_PID);
   if (!Number.isInteger(parentPid) || parentPid <= 0) {
     return;
   }

@@ -265,7 +265,7 @@ async function refresh({ showLoading = false, force = false } = {}) {
     setStatus('', 'muted');
   } catch (error) {
     console.error('[popup] refresh failed', error);
-    setStatus('Could not connect to Photo GPT Bridge.', 'error');
+    setStatus('Could not connect to SnapOverLAN.', 'error');
   } finally {
     refreshInFlight = false;
     refreshBtn.disabled = false;

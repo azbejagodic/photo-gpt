@@ -603,7 +603,7 @@ function formatBatchZipName(batchTimestamp) {
   const minutes = String(safeDate.getMinutes()).padStart(2, '0');
   const seconds = String(safeDate.getSeconds()).padStart(2, '0');
 
-  return `photo-gpt_${year}-${month}-${day}_${hours}-${minutes}-${seconds}_batch.zip`;
+  return `snapoverlan_${year}-${month}-${day}_${hours}-${minutes}-${seconds}_batch.zip`;
 }
 
 async function getCurrentBatchZipName() {
@@ -988,12 +988,12 @@ function renderDiagnostics(data) {
   if (privateLanUrls.length === 0) {
     diagnosticsWarning.hidden = false;
     diagnosticsWarning.className = 'diagnostics-note warning';
-    diagnosticsWarning.textContent = 'No private LAN IPv4 address was detected. Make sure the PC is connected to the same Wi-Fi as the phone, the network profile is Private, and Windows Firewall allows Photo GPT on Private networks.';
+    diagnosticsWarning.textContent = 'No private LAN IPv4 address was detected. Make sure the PC is connected to the same Wi-Fi as the phone, the network profile is Private, and Windows Firewall allows SnapOverLAN on Private networks.';
     diagnosticsPanel.open = true;
   } else {
     diagnosticsWarning.hidden = false;
     diagnosticsWarning.className = 'diagnostics-note';
-    diagnosticsWarning.textContent = 'Phone checklist: use the LAN URL above, keep phone and PC on the same Wi-Fi, set the PC network to Private, and allow Photo GPT through Windows Firewall on Private networks if Windows asks.';
+    diagnosticsWarning.textContent = 'Phone checklist: use the LAN URL above, keep phone and PC on the same Wi-Fi, set the PC network to Private, and allow SnapOverLAN through Windows Firewall on Private networks if Windows asks.';
   }
 }
 

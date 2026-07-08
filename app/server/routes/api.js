@@ -118,7 +118,7 @@ const formatBatchZipName = (batchTimestamp) => {
   const minutes = padDatePart(safeDate.getMinutes());
   const seconds = padDatePart(safeDate.getSeconds());
 
-  return `photo-gpt_${year}-${month}-${day}_${hours}-${minutes}-${seconds}_batch.zip`;
+  return `snapoverlan_${year}-${month}-${day}_${hours}-${minutes}-${seconds}_batch.zip`;
 };
 
 const uploadStatus = {

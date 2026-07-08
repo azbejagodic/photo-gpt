@@ -392,7 +392,7 @@ const storage = multer.diskStorage({
     const ext = path.extname(file.originalname).toLowerCase();
     const mediaNumber = String(req.uploadBatchCounts[mediaType]).padStart(3, '0');
 
-    cb(null, `photo-gpt_${req.uploadBatchTimestamp}_${mediaType}-${mediaNumber}${ext}`);
+    cb(null, `snapoverlan_${req.uploadBatchTimestamp}_${mediaType}-${mediaNumber}${ext}`);
   },
 });
 

@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Photo To GPT",
+  "name": "SnapOverLAN",
   "version": "1.0.2",
-  "description": "Fetch images from a LAN server and copy image blobs to clipboard from the popup user gesture.",
+  "description": "Fetch images from SnapOverLAN and copy image blobs to clipboard from the popup user gesture.",
   "action": {
-    "default_title": "LAN Image Clipboard Copier",
+    "default_title": "SnapOverLAN",
     "default_popup": "popup.html"
   },
   "permissions": [

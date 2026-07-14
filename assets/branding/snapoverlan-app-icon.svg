@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">SnapOverLAN application icon</title>
+  <desc id="desc">Three blue-to-teal forward chevrons on a rounded dark square.</desc>
+  <defs>
+    <linearGradient id="snap-gradient" x1="18" y1="128" x2="238" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b6fff"/>
+      <stop offset="1" stop-color="#10cdb4"/>
+    </linearGradient>
+  </defs>
+  <rect x="48" y="48" width="928" height="928" rx="220" fill="#343940"/>
+  <g transform="translate(152 118) scale(3.08)" fill="none" stroke="url(#snap-gradient)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M28 72L86 128L28 184"/>
+    <path d="M88 72L146 128L88 184"/>
+    <path d="M148 72L206 128L148 184"/>
+  </g>
+</svg>

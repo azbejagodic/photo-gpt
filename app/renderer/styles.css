@@ -89,6 +89,18 @@ h1 {
   white-space: nowrap;
 }
 
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.brand-logo {
+  width: 30px;
+  height: 30px;
+  display: block;
+}
+
 .brand-lan {
   color: #7cf4c6;
 }
@@ -111,6 +123,44 @@ h3 {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.server-controls {
+  min-width: 0;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.header-toggle {
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid rgba(216, 248, 255, 0.3);
+  border-radius: 9px;
+  color: #e9fbff;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, opacity 140ms ease;
+}
+
+.header-toggle[aria-pressed="true"] {
+  border-color: rgba(124, 244, 198, 0.56);
+  background: rgba(5, 169, 135, 0.2);
+}
+
+.header-toggle:hover:not(:disabled) {
+  border-color: rgba(216, 248, 255, 0.52);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.header-toggle:disabled {
+  cursor: wait;
+  opacity: 0.62;
 }
 
 .header-button {
@@ -150,6 +200,7 @@ h3 {
 }
 
 .header-button:focus-visible,
+.header-toggle:focus-visible,
 .modal-close-button:focus-visible {
   outline: 3px solid rgba(180, 245, 255, 0.42);
   outline-offset: 3px;
@@ -763,6 +814,10 @@ h3 {
   .header-button {
     height: 34px;
   }
+
+  .header-toggle {
+    min-height: 28px;
+  }
 }
 
 @media (max-width: 760px) {
@@ -779,7 +834,7 @@ h3 {
     grid-area: title;
   }
 
-  .server-line {
+  .server-controls {
     grid-area: status;
   }
 

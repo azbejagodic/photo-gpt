@@ -9,7 +9,10 @@
     "server": "node app/server/index.js",
     "desktop": "electron app/main.js",
     "app": "electron app/main.js",
-    "dist": "electron-builder --win"
+    "dist": "npm run generate:icons && electron-builder --win",
+    "generate:icons": "node scripts/generate-icons.mjs",
+    "test:pwa-connection": "node --test tests/pwa-connection.test.mjs",
+    "test:electron-controls": "node --test tests/electron-server-controls.test.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -18,19 +21,22 @@
   },
   "devDependencies": {
     "electron": "^31.7.7",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "sharp": "^0.34.5"
   },
   "build": {
     "appId": "local.snapoverlan.app",
     "productName": "SnapOverLAN",
     "asar": false,
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "assets/electron"
     },
     "files": [
       "app/**/*",
       "pwa/**/*",
       "extension/**/*",
+      "assets/**/*",
       "package.json",
       "!data/**/*",
       "!dist/**/*",
@@ -38,6 +44,7 @@
       "!**/*.log"
     ],
     "win": {
+      "icon": "assets/electron/app.ico",
       "target": [
         {
           "target": "nsis",
@@ -52,6 +59,12 @@
           ]
         }
       ]
+    },
+    "mac": {
+      "icon": "assets/electron/app.icns"
+    },
+    "linux": {
+      "icon": "assets/electron"
     },
     "nsis": {
       "oneClick": false,

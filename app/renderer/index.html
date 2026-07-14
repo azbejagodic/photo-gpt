@@ -9,11 +9,15 @@
 <body>
   <main class="app-shell" aria-label="SnapOverLAN">
     <header class="title-row">
-      <p id="connectionPill" class="server-line checking" aria-live="polite">
-        <span class="status-dot" aria-hidden="true"></span>
-        <span>Checking server</span>
-      </p>
-      <h1><span class="brand">SnapOver<span class="brand-lan">LAN</span></span></h1>
+      <div class="server-controls">
+        <p id="connectionPill" class="server-line checking" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>Checking server</span>
+        </p>
+        <button id="serverToggleBtn" class="header-toggle" type="button" aria-label="Turn server on" aria-pressed="false">Server: Off</button>
+        <button id="backgroundToggleBtn" class="header-toggle" type="button" aria-label="Turn background mode on" aria-pressed="false">Background: Off</button>
+      </div>
+      <h1 class="brand-lockup"><img class="brand-logo" src="../../assets/branding/snapoverlan-mark.svg" alt="" /><span class="brand">SnapOver<span class="brand-lan">LAN</span></span></h1>
       <div class="header-actions">
         <button id="qrBtn" class="header-button qr-button" type="button">QR</button>
         <button id="refreshBtn" class="header-button refresh-button" type="button">Refresh</button>

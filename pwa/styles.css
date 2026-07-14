@@ -89,6 +89,18 @@ h2 {
   white-space: nowrap;
 }
 
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.brand-logo {
+  width: 28px;
+  height: 28px;
+  display: block;
+}
+
 .brand-lan {
   color: #087c66;
 }

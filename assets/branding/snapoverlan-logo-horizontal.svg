@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 200" role="img" aria-labelledby="title desc">
+  <title id="title">SnapOverLAN</title>
+  <desc id="desc">Three forward chevrons followed by the SnapOverLAN wordmark.</desc>
+  <style>
+    .snapover { fill: #18313d; }
+    @media (prefers-color-scheme: dark) { .snapover { fill: #f4fdff; } }
+  </style>
+  <defs>
+    <linearGradient id="snap-gradient" x1="14" y1="100" x2="186" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b6fff"/>
+      <stop offset="1" stop-color="#10cdb4"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(0 0) scale(.78125)" fill="none" stroke="url(#snap-gradient)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M28 72L86 128L28 184"/>
+    <path d="M88 72L146 128L88 184"/>
+    <path d="M148 72L206 128L148 184"/>
+  </g>
+  <text x="190" y="137" font-family="Segoe UI, Arial, sans-serif" font-size="112" font-weight="800" letter-spacing="-3">
+    <tspan class="snapover">SnapOver</tspan><tspan fill="#10cdb4">LAN</tspan>
+  </text>
+</svg>

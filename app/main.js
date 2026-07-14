@@ -1,7 +1,16 @@
-import { app as electronApp, BrowserWindow, dialog, shell } from 'electron';
+import {
+  app as electronApp,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  shell,
+  Tray,
+} from 'electron';
 import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import http from 'http';
+import net from 'net';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -10,16 +19,29 @@ const __dirname = path.dirname(__filename);
 const projectRoot = path.join(__dirname, '..');
 const serverPath = path.join(__dirname, 'server', 'index.js');
 const rendererPath = path.join(__dirname, 'renderer', 'index.html');
+const preloadPath = path.join(__dirname, 'preload.cjs');
+const appIconPath = path.join(projectRoot, 'assets', 'electron', 'app-512.png');
+const trayIconPath = path.join(projectRoot, 'assets', 'electron', 'tray-24.png');
 
 const PORT = 8787;
 const SERVER_ORIGIN = `http://localhost:${PORT}`;
 const SERVER_STATUS_URL = `${SERVER_ORIGIN}/api/server-status`;
+const SERVER_STOP_TIMEOUT_MS = 4000;
+const SERVER_FORCE_STOP_TIMEOUT_MS = 1500;
 
 electronApp.setName('SnapOverLAN');
 
 let mainWindow = null;
+let tray = null;
 let ownedServerProcess = null;
-let serverLaunchMode = 'unknown';
+let serverLaunchMode = 'offline';
+let serverState = 'offline';
+let serverError = '';
+let serverOperation = null;
+let backgroundMode = false;
+let serverAutoStart = true;
+let quitOperation = null;
+let allowQuit = false;
 
 const delay = (ms) => new Promise((resolve) => {
   setTimeout(resolve, ms);
@@ -61,7 +83,21 @@ const getServerStatus = async () => {
   }
 };
 
+const isPortInUse = () => new Promise((resolve) => {
+  const socket = net.createConnection({ host: '127.0.0.1', port: PORT });
+  const finish = (inUse) => {
+    socket.removeAllListeners();
+    socket.destroy();
+    resolve(inUse);
+  };
+  socket.setTimeout(500);
+  socket.once('connect', () => finish(true));
+  socket.once('timeout', () => finish(false));
+  socket.once('error', () => finish(false));
+});
+
 const getStartupLogPath = () => path.join(electronApp.getPath('userData'), 'startup.log');
+const getSettingsPath = () => path.join(electronApp.getPath('userData'), 'desktop-settings.json');
 
 const writeStartupLog = async (event, details = {}) => {
   const logPath = getStartupLogPath();
@@ -78,8 +114,89 @@ const writeStartupLog = async (event, details = {}) => {
   await fs.appendFile(logPath, `${JSON.stringify(record)}\n`);
 };
 
-const waitForServer = async () => {
+const loadSettings = async () => {
+  try {
+    const settings = JSON.parse(await fs.readFile(getSettingsPath(), 'utf8'));
+    backgroundMode = settings.backgroundMode === true;
+    serverAutoStart = settings.serverAutoStart !== false;
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.warn('Could not read SnapOverLAN desktop settings:', error);
+    }
+  }
+};
+
+const saveSettings = async () => {
+  const settingsPath = getSettingsPath();
+  await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+  await fs.writeFile(settingsPath, `${JSON.stringify({
+    backgroundMode,
+    serverAutoStart,
+  }, null, 2)}\n`, 'utf8');
+};
+
+const getServerStatePayload = () => ({
+  state: serverState,
+  error: serverError,
+  owned: Boolean(ownedServerProcess),
+});
+
+const sendDesktopState = () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('desktop:state-changed', {
+      server: getServerStatePayload(),
+      backgroundMode,
+    });
+  }
+};
+
+const updateTrayMenu = () => {
+  if (!tray || tray.isDestroyed()) {
+    return;
+  }
+
+  const serverBusy = serverState === 'starting' || serverState === 'stopping';
+  const serverIsRunning = serverState === 'online';
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {
+      label: 'Open SnapOverLAN',
+      click: () => openMainWindow(),
+    },
+    { type: 'separator' },
+    {
+      label: serverIsRunning ? 'Stop Server' : 'Start Server',
+      enabled: !serverBusy,
+      click: () => {
+        const operation = serverIsRunning ? stopServer() : startServer();
+        operation.catch((error) => console.error(error));
+      },
+    },
+    {
+      label: `Background Mode: ${backgroundMode ? 'On' : 'Off'}`,
+      click: () => {
+        setBackgroundMode(!backgroundMode).catch((error) => console.error(error));
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => requestQuit(),
+    },
+  ]));
+};
+
+const setServerState = (nextState, error = '') => {
+  serverState = nextState;
+  serverError = error;
+  updateTrayMenu();
+  sendDesktopState();
+};
+
+const waitForServer = async (serverProcess) => {
   for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (serverProcess.exitCode !== null || ownedServerProcess !== serverProcess) {
+      return null;
+    }
     const status = await getServerStatus();
     if (status) {
       return status;
@@ -90,20 +207,34 @@ const waitForServer = async () => {
   return null;
 };
 
-const cleanupOwnedServer = () => {
-  if (!ownedServerProcess) {
+const waitForProcessExit = (serverProcess, timeoutMs) => new Promise((resolve) => {
+  if (serverProcess.exitCode !== null) {
+    resolve(true);
     return;
   }
 
-  const serverProcess = ownedServerProcess;
-  ownedServerProcess = null;
+  const timeout = setTimeout(() => {
+    serverProcess.removeListener('exit', handleExit);
+    resolve(false);
+  }, timeoutMs);
+  const handleExit = () => {
+    clearTimeout(timeout);
+    resolve(true);
+  };
+  serverProcess.once('exit', handleExit);
+});
 
-  if (!serverProcess.killed) {
-    serverProcess.kill();
+const startServerInternal = async ({ persistAutoStart = true } = {}) => {
+  if (serverState === 'online') {
+    return getServerStatePayload();
   }
-};
 
-const ensureServer = async () => {
+  setServerState('starting');
+  if (persistAutoStart) {
+    serverAutoStart = true;
+    await saveSettings();
+  }
+
   const existingStatus = await getServerStatus();
   if (existingStatus) {
     serverLaunchMode = 'reused';
@@ -111,7 +242,14 @@ const ensureServer = async () => {
       serverStatus: existingStatus,
       logFile: getStartupLogPath(),
     });
-    return;
+    setServerState('online');
+    return getServerStatePayload();
+  }
+
+  if (await isPortInUse()) {
+    const error = `Port ${PORT} is already in use by another application.`;
+    setServerState('error', error);
+    throw new Error(error);
   }
 
   const isPackaged = electronApp.isPackaged;
@@ -123,7 +261,6 @@ const ensureServer = async () => {
     SNAPOVERLAN_PARENT_PID: String(process.pid),
     SNAPOVERLAN_LOG_FILE: logPath,
     SNAPOVERLAN_SERVER_SOURCE: isPackaged ? 'electron-packaged-child' : 'electron-dev-child',
-    // Legacy PHOTO_GPT_* names keep older developer scripts and installs working.
     PHOTO_GPT_PARENT_PID: String(process.pid),
     PHOTO_GPT_LOG_FILE: logPath,
     PHOTO_GPT_SERVER_SOURCE: isPackaged ? 'electron-packaged-child' : 'electron-dev-child',
@@ -146,25 +283,50 @@ const ensureServer = async () => {
     logFile: logPath,
   });
 
-  ownedServerProcess = spawn(nodePath, [serverPath], {
+  const serverProcess = spawn(nodePath, [serverPath], {
     cwd: projectRoot,
     env: childEnv,
-    stdio: isPackaged ? 'ignore' : 'inherit',
+    stdio: isPackaged
+      ? ['ignore', 'ignore', 'ignore', 'ipc']
+      : ['ignore', 'inherit', 'inherit', 'ipc'],
     windowsHide: true,
   });
+  ownedServerProcess = serverProcess;
 
-  ownedServerProcess.once('exit', (code, signal) => {
-    if (ownedServerProcess) {
-      console.error(`SnapOverLAN server process exited early (${signal || code}).`);
-      writeStartupLog('server-exited-early', { code, signal }).catch(() => {});
+  serverProcess.once('error', (error) => {
+    if (ownedServerProcess === serverProcess) {
       ownedServerProcess = null;
+      setServerState('error', `Could not start the server: ${error.message}`);
+    }
+  });
+  serverProcess.once('exit', (code, signal) => {
+    if (ownedServerProcess !== serverProcess) {
+      return;
+    }
+    ownedServerProcess = null;
+    if (serverState !== 'stopping' && !allowQuit) {
+      const error = `Server process exited unexpectedly (${signal || code}).`;
+      console.error(error);
+      setServerState('error', error);
+      writeStartupLog('server-exited-early', { code, signal }).catch(() => {});
     }
   });
 
-  const status = await waitForServer();
+  const status = await waitForServer(serverProcess);
   if (!status) {
-    cleanupOwnedServer();
-    throw new Error(`The local server did not become ready at ${SERVER_STATUS_URL}.`);
+    if (ownedServerProcess === serverProcess) {
+      ownedServerProcess = null;
+    }
+    if (serverProcess.exitCode === null) {
+      serverProcess.kill();
+      await waitForProcessExit(serverProcess, SERVER_FORCE_STOP_TIMEOUT_MS);
+    }
+    const portConflict = await isPortInUse();
+    const error = portConflict
+      ? `Port ${PORT} is already in use; SnapOverLAN did not start a second server.`
+      : `The local server did not become ready at ${SERVER_STATUS_URL}.`;
+    setServerState('error', error);
+    throw new Error(error);
   }
 
   serverLaunchMode = 'started';
@@ -172,6 +334,88 @@ const ensureServer = async () => {
     serverStatus: status,
     logFile: logPath,
   });
+  setServerState('online');
+  return getServerStatePayload();
+};
+
+const startServer = (options) => {
+  if (serverOperation) {
+    return serverOperation.then(() => startServer(options));
+  }
+  serverOperation = startServerInternal(options)
+    .catch((error) => {
+      if (serverState !== 'error') {
+        setServerState('error', error.message || 'The server failed to start.');
+      }
+      throw error;
+    })
+    .finally(() => {
+      serverOperation = null;
+    });
+  return serverOperation;
+};
+
+const stopServerInternal = async ({ persistAutoStart = true } = {}) => {
+  if (persistAutoStart) {
+    serverAutoStart = false;
+    await saveSettings();
+  }
+
+  const serverProcess = ownedServerProcess;
+  if (!serverProcess) {
+    const externalStatus = await getServerStatus();
+    if (externalStatus) {
+      const error = 'The server is running outside this Electron app and cannot be stopped here.';
+      setServerState('error', error);
+      throw new Error(error);
+    }
+    serverLaunchMode = 'offline';
+    setServerState('offline');
+    return getServerStatePayload();
+  }
+
+  setServerState('stopping');
+  let exited = false;
+  let forced = false;
+  try {
+    if (serverProcess.connected) {
+      serverProcess.send({ type: 'snapoverlan:shutdown' });
+      exited = await waitForProcessExit(serverProcess, SERVER_STOP_TIMEOUT_MS);
+    }
+  } catch (error) {
+    console.warn('Graceful server shutdown failed:', error);
+  }
+
+  if (!exited && serverProcess.exitCode === null) {
+    console.warn('Forcing the owned SnapOverLAN server process to stop.');
+    forced = true;
+    serverProcess.kill();
+    exited = await waitForProcessExit(serverProcess, SERVER_FORCE_STOP_TIMEOUT_MS);
+  }
+
+  if (ownedServerProcess === serverProcess) {
+    ownedServerProcess = null;
+  }
+  if (!exited && serverProcess.exitCode === null) {
+    const error = 'The owned server process did not stop cleanly.';
+    setServerState('error', error);
+    throw new Error(error);
+  }
+
+  serverLaunchMode = 'offline';
+  setServerState('offline');
+  await writeStartupLog('server-stopped', { forced }).catch(() => {});
+  return getServerStatePayload();
+};
+
+const stopServer = (options) => {
+  if (serverOperation) {
+    return serverOperation.then(() => stopServer(options));
+  }
+  serverOperation = stopServerInternal(options).finally(() => {
+    serverOperation = null;
+  });
+  return serverOperation;
 };
 
 const isLocalAppUrl = (targetUrl) => {
@@ -183,6 +427,18 @@ const isLocalAppUrl = (targetUrl) => {
   }
 };
 
+const showMainWindow = () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return false;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+  return true;
+};
+
 const createWindow = async () => {
   mainWindow = new BrowserWindow({
     width: 960,
@@ -190,9 +446,11 @@ const createWindow = async () => {
     minWidth: 860,
     minHeight: 540,
     title: 'SnapOverLAN',
+    icon: appIconPath,
     backgroundColor: '#343940',
     autoHideMenuBar: true,
     webPreferences: {
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -207,6 +465,7 @@ const createWindow = async () => {
         action: 'allow',
         overrideBrowserWindowOptions: {
           title: 'SnapOverLAN',
+          icon: appIconPath,
           width: 1000,
           height: 760,
           autoHideMenuBar: true,
@@ -224,10 +483,23 @@ const createWindow = async () => {
     return { action: 'deny' };
   });
 
+  mainWindow.on('close', (event) => {
+    if (allowQuit) {
+      return;
+    }
+    event.preventDefault();
+    if (backgroundMode) {
+      mainWindow.hide();
+      return;
+    }
+    requestQuit();
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 
+  mainWindow.webContents.on('did-finish-load', sendDesktopState);
   await mainWindow.loadFile(rendererPath, {
     query: {
       launcher: 'electron',
@@ -236,43 +508,122 @@ const createWindow = async () => {
   });
 };
 
+async function openMainWindow() {
+  if (showMainWindow()) {
+    return;
+  }
+  await createWindow();
+  showMainWindow();
+}
+
+const createTray = () => {
+  if (tray && !tray.isDestroyed()) {
+    updateTrayMenu();
+    return;
+  }
+  tray = new Tray(trayIconPath);
+  tray.setToolTip('SnapOverLAN');
+  tray.on('double-click', () => openMainWindow());
+  updateTrayMenu();
+};
+
+const destroyTray = () => {
+  if (!tray || tray.isDestroyed()) {
+    tray = null;
+    return;
+  }
+  tray.destroy();
+  tray = null;
+};
+
+async function setBackgroundMode(enabled) {
+  const nextValue = Boolean(enabled);
+  if (backgroundMode === nextValue) {
+    return backgroundMode;
+  }
+  backgroundMode = nextValue;
+  try {
+    await saveSettings();
+  } catch (error) {
+    backgroundMode = !nextValue;
+    throw error;
+  }
+
+  if (backgroundMode) {
+    createTray();
+  } else {
+    await openMainWindow();
+    destroyTray();
+  }
+  updateTrayMenu();
+  sendDesktopState();
+  return backgroundMode;
+}
+
+async function requestQuit() {
+  if (quitOperation) {
+    return quitOperation;
+  }
+  quitOperation = (async () => {
+    try {
+      await stopServer({ persistAutoStart: false });
+    } catch (error) {
+      console.error('Could not stop the SnapOverLAN server during quit:', error);
+    }
+    destroyTray();
+    allowQuit = true;
+    electronApp.quit();
+  })();
+  return quitOperation;
+}
+
+ipcMain.handle('server:get-state', () => getServerStatePayload());
+ipcMain.handle('server:start', () => startServer());
+ipcMain.handle('server:stop', () => stopServer());
+ipcMain.handle('background:get', () => backgroundMode);
+ipcMain.handle('background:set', (_event, enabled) => setBackgroundMode(enabled));
+
 const gotLock = electronApp.requestSingleInstanceLock();
 
 if (!gotLock) {
   electronApp.quit();
 } else {
   electronApp.on('second-instance', () => {
-    if (!mainWindow) {
-      return;
-    }
-
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-    mainWindow.focus();
+    openMainWindow().catch((error) => console.error(error));
   });
 
   electronApp.whenReady().then(async () => {
-    try {
-      await ensureServer();
-      await createWindow();
-    } catch (err) {
-      dialog.showErrorBox('SnapOverLAN could not start', err.message || String(err));
-      electronApp.quit();
+    await loadSettings();
+    await createWindow();
+    if (backgroundMode) {
+      createTray();
     }
+    if (serverAutoStart) {
+      startServer({ persistAutoStart: false }).catch((error) => {
+        console.error('SnapOverLAN server startup failed:', error);
+      });
+    }
+  }).catch((error) => {
+    dialog.showErrorBox('SnapOverLAN could not start', error.message || String(error));
+    allowQuit = true;
+    electronApp.quit();
   });
 
-  electronApp.on('activate', async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      await createWindow();
-    }
+  electronApp.on('activate', () => {
+    openMainWindow().catch((error) => console.error(error));
   });
 
-  electronApp.on('before-quit', cleanupOwnedServer);
+  electronApp.on('before-quit', (event) => {
+    if (allowQuit) {
+      return;
+    }
+    event.preventDefault();
+    requestQuit();
+  });
 
   electronApp.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-      electronApp.quit();
+    if (process.platform !== 'darwin' && !backgroundMode && !allowQuit) {
+      requestQuit();
     }
   });
 }

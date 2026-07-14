@@ -1,5 +1,7 @@
 # SnapOverLAN
 
+![SnapOverLAN](assets/branding/snapoverlan-logo-horizontal.svg)
+
 SnapOverLAN is a local phone-to-PC media bridge. Photos and videos stay on your LAN, and each successful upload becomes the current batch. It is useful for ChatGPT image workflows, browser clipboard workflows, or any local process that accepts pasted, opened, or downloaded media.
 
 The product has three user-facing parts:
@@ -171,6 +173,26 @@ SnapOverLAN/
   package-lock.json
   README.md
 ```
+
+## Branding and icons
+
+The SVG masters are in `assets/branding`:
+
+- `snapoverlan-mark.svg` — gradient compact mark for headers, favicons, and extension UI.
+- `snapoverlan-mark-black.svg` and `snapoverlan-mark-white.svg` — monochrome uses.
+- `snapoverlan-wordmark.svg` — standalone `SnapOverLAN` wordmark for dark backgrounds.
+- `snapoverlan-logo-horizontal.svg` — aligned mark and wordmark lockup.
+- `snapoverlan-app-icon.svg` — padded rounded-square desktop and install icon.
+
+Run `npm run generate:icons` to render all PNG sizes, Windows ICO, macOS
+ICNS, Linux icons, tray icons, extension icons, favicons, Apple touch icon,
+and standard/maskable PWA icons. Raster masters and size previews are written
+under `assets/branding/png`; platform files are written to `assets/electron`,
+`extension/icons`, and `pwa/icons`.
+
+Extension toolbar icons use the rounded dark app tile. Regular PWA icons retain
+transparent rounded-square corners, while Apple touch and maskable icons use an
+opaque full-bleed dark canvas so platform masking cannot introduce a light frame.
 
 ## Environment
 

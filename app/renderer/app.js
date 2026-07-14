@@ -1,6 +1,8 @@
 const refreshBtn = document.getElementById('refreshBtn');
 const qrBtn = document.getElementById('qrBtn');
 const connectionPill = document.getElementById('connectionPill');
+const serverToggleBtn = document.getElementById('serverToggleBtn');
+const backgroundToggleBtn = document.getElementById('backgroundToggleBtn');
 const serverStatusBadge = document.getElementById('serverStatusBadge');
 const serverStateLabel = document.getElementById('serverStateLabel');
 const serverLanAddress = document.getElementById('serverLanAddress');
@@ -99,6 +101,8 @@ let gridCountSetting = GRID_COUNT_OPTIONS.includes(localStorage.getItem(GRID_COU
   : DEFAULT_GRID_COUNT;
 let lastServerStatusData = null;
 let statusLastCheckedAt = null;
+let desktopServerState = 'offline';
+let backgroundModeEnabled = false;
 const launchParams = new URLSearchParams(window.location.search);
 const SERVER_ORIGIN = 'http://localhost:8787';
 
@@ -843,6 +847,57 @@ function renderConnectionState(state, label) {
   setBadge(connectionPill, 'server-line', state, label);
 }
 
+function renderDesktopControls() {
+  if (serverToggleBtn) {
+    const serverBusy = desktopServerState === 'starting' || desktopServerState === 'stopping';
+    const serverOn = desktopServerState === 'online' || desktopServerState === 'starting';
+    const stateLabels = {
+      starting: 'Server: Starting…',
+      stopping: 'Server: Stopping…',
+      error: 'Server: Error',
+    };
+    serverToggleBtn.textContent = stateLabels[desktopServerState] || `Server: ${serverOn ? 'On' : 'Off'}`;
+    serverToggleBtn.disabled = serverBusy;
+    serverToggleBtn.setAttribute('aria-pressed', String(serverOn));
+    serverToggleBtn.setAttribute('aria-label', serverOn ? 'Turn server off' : 'Turn server on');
+  }
+
+  if (backgroundToggleBtn) {
+    backgroundToggleBtn.textContent = `Background: ${backgroundModeEnabled ? 'On' : 'Off'}`;
+    backgroundToggleBtn.setAttribute('aria-pressed', String(backgroundModeEnabled));
+    backgroundToggleBtn.setAttribute(
+      'aria-label',
+      backgroundModeEnabled ? 'Turn background mode off' : 'Turn background mode on',
+    );
+  }
+}
+
+function setDesktopServerState(state) {
+  desktopServerState = state || 'offline';
+  renderDesktopControls();
+}
+
+async function syncDesktopControls() {
+  if (!window.snapOverLAN) {
+    return;
+  }
+
+  try {
+    const [server, background] = await Promise.all([
+      window.snapOverLAN.getServerState(),
+      window.snapOverLAN.getBackgroundMode(),
+    ]);
+    setDesktopServerState(server?.state);
+    backgroundModeEnabled = Boolean(background);
+    renderDesktopControls();
+    if (server?.state === 'error' && server.error) {
+      renderStatus({ state: 'offline', message: server.error });
+    }
+  } catch (error) {
+    console.error('Could not read Electron server controls:', error);
+  }
+}
+
 function renderStatus({ state, message } = {}) {
   const statusState = state || (
     lastServerStatusData?.status === 'listening' ? 'online' : 'checking'
@@ -1432,12 +1487,16 @@ async function loadServerStatus({ showActivity = false } = {}) {
 
     lastServerStatusData = await response.json();
     statusLastCheckedAt = new Date();
+    setDesktopServerState('online');
     renderStatus();
     renderDiagnostics(lastServerStatusData);
     return lastServerStatusData;
   } catch (error) {
     lastServerStatusData = null;
     statusLastCheckedAt = new Date();
+    if (desktopServerState !== 'starting' && desktopServerState !== 'stopping') {
+      setDesktopServerState('offline');
+    }
     renderStatus({ state: 'offline', message: error.message || 'The local server is not responding.' });
     renderDiagnosticsError(error);
     return null;
@@ -1757,6 +1816,43 @@ refreshBtn.addEventListener('click', () => {
   refreshDashboard({ source: 'manual' });
 });
 
+serverToggleBtn?.addEventListener('click', async () => {
+  if (!window.snapOverLAN) {
+    return;
+  }
+
+  const shouldStop = desktopServerState === 'online';
+  setDesktopServerState(shouldStop ? 'stopping' : 'starting');
+  try {
+    const server = shouldStop
+      ? await window.snapOverLAN.stopServer()
+      : await window.snapOverLAN.startServer();
+    setDesktopServerState(server?.state);
+  } catch (error) {
+    const server = await window.snapOverLAN.getServerState().catch(() => ({ state: 'error' }));
+    setDesktopServerState(server?.state || 'error');
+    renderStatus({ state: 'offline', message: server?.error || error.message || 'Could not change server state.' });
+  } finally {
+    refreshDashboard({ source: 'manual' });
+  }
+});
+
+backgroundToggleBtn?.addEventListener('click', async () => {
+  if (!window.snapOverLAN) {
+    return;
+  }
+
+  backgroundToggleBtn.disabled = true;
+  try {
+    backgroundModeEnabled = await window.snapOverLAN.setBackgroundMode(!backgroundModeEnabled);
+    renderDesktopControls();
+  } catch (error) {
+    console.error('Could not change background mode:', error);
+  } finally {
+    backgroundToggleBtn.disabled = false;
+  }
+});
+
 qrBtn.addEventListener('click', openQrModal);
 
 closeQrBtn.addEventListener('click', closeQrModal);
@@ -1878,5 +1974,6 @@ if (window.ResizeObserver) {
 }
 
 refreshDashboard({ source: 'initial' });
+syncDesktopControls();
 startUploadStatusRefresh();
 startAutoRefresh();

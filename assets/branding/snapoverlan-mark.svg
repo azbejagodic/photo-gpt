@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">SnapOverLAN transfer mark</title>
+  <desc id="desc">Three bold forward-facing chevrons in a blue-to-teal gradient.</desc>
+  <defs>
+    <linearGradient id="snap-gradient" x1="18" y1="128" x2="238" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b6fff"/>
+      <stop offset="1" stop-color="#10cdb4"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(11 0)" fill="none" stroke="url(#snap-gradient)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M28 72L86 128L28 184"/>
+    <path d="M88 72L146 128L88 184"/>
+    <path d="M148 72L206 128L148 184"/>
+  </g>
+</svg>

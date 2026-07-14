@@ -21,6 +21,7 @@ import { createFilesRouter } from './routes/files.js';
 
 const app = express();
 let serverInstance = null;
+let shutdownPromise = null;
 
 app.use(cors({
   origin: true,
@@ -110,6 +111,7 @@ const stopServer = async () => {
       }
       resolve();
     });
+    serverInstance.closeIdleConnections?.();
   });
   serverInstance = null;
 };
@@ -126,11 +128,33 @@ const watchParentProcess = () => {
       process.kill(parentPid, 0);
     } catch (err) {
       if (err.code === 'ESRCH') {
-        process.exit(0);
+        shutdownServer('parent-exited');
       }
     }
   }, 2000);
   timer.unref();
+};
+
+const shutdownServer = (reason) => {
+  if (shutdownPromise) {
+    return shutdownPromise;
+  }
+
+  shutdownPromise = (async () => {
+    try {
+      await appendStartupLog('server-stopping', { reason });
+      await stopServer();
+      if (process.connected) {
+        process.send?.({ type: 'snapoverlan:stopped' });
+      }
+      process.exit(0);
+    } catch (error) {
+      console.error('Could not stop SnapOverLAN cleanly:', error);
+      process.exit(1);
+    }
+  })();
+
+  return shutdownPromise;
 };
 
 const isDirectRun = process.argv[1]
@@ -138,6 +162,13 @@ const isDirectRun = process.argv[1]
 
 if (isDirectRun) {
   watchParentProcess();
+  process.once('SIGINT', () => shutdownServer('SIGINT'));
+  process.once('SIGTERM', () => shutdownServer('SIGTERM'));
+  process.on('message', (message) => {
+    if (message?.type === 'snapoverlan:shutdown') {
+      shutdownServer('electron-ipc');
+    }
+  });
   startServer().catch((err) => {
     console.error(err);
     process.exit(1);

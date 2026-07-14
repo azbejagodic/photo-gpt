@@ -209,7 +209,7 @@ uploadBtn.addEventListener('click', async () => {
     updateSelectedCount();
     setStatus(`Uploaded ${uploadedCount} file${uploadedCount > 1 ? 's' : ''}.`, 'success');
   } catch (error) {
-    setStatus(error.message || 'Upload failed. Please try again.', 'error');
+    setStatus('Upload failed. Your selected files are still available.', 'error');
     uploadBtn.disabled = selectedFiles.length === 0;
   }
 });
@@ -218,4 +218,22 @@ updateSelectedCount();
 renderSelectedTray();
 if (!hasEverSelectedFiles && selectedFiles.length === 0) {
   setStatus('No files selected yet.');
+}
+
+// Retire the temporary app-shell worker so it cannot keep an older HTML/JS pair alive.
+// Every operation is best-effort and deliberately isolated from application startup.
+if ('serviceWorker' in navigator && typeof navigator.serviceWorker.getRegistrations === 'function') {
+  navigator.serviceWorker.getRegistrations()
+    .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+    .catch(() => {});
+}
+
+if ('caches' in window) {
+  window.caches.keys()
+    .then((keys) => Promise.all(
+      keys
+        .filter((key) => key.startsWith('snapoverlan-shell-'))
+        .map((key) => window.caches.delete(key)),
+    ))
+    .catch(() => {});
 }

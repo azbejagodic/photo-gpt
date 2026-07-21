@@ -35,6 +35,7 @@ const gridCountSelect = document.getElementById('gridCountSelect');
 const gridCountControl = document.querySelector('.grid-count-control');
 const batchesBtn = document.getElementById('batchesBtn');
 const batchesPanel = document.getElementById('batchesPanel');
+const closeBatchesBtn = document.getElementById('closeBatchesBtn');
 const batchesList = document.getElementById('batchesList');
 const retentionSelect = document.getElementById('retentionSelect');
 const saveRetentionBtn = document.getElementById('saveRetentionBtn');
@@ -93,6 +94,7 @@ let hasLoadedPhotos = false;
 let latestFiles = [];
 let savedBatches = [];
 let batchesRefreshPromise = null;
+let savedRetentionValue = null;
 let currentPicturesPage = 0;
 let gridLayout = { ...DEFAULT_GRID_LAYOUT };
 let picturesView = localStorage.getItem(PICTURES_VIEW_KEY) === 'list' ? 'list' : 'grid';
@@ -729,6 +731,19 @@ function renderBatches() {
   batchesList.appendChild(fragment);
 }
 
+function normalizeRetentionValue(value) {
+  return value ? String(value) : '';
+}
+
+function updateRetentionSaveButton() {
+  if (!retentionSelect || !saveRetentionBtn) {
+    return;
+  }
+
+  saveRetentionBtn.disabled = savedRetentionValue !== null
+    && retentionSelect.value === savedRetentionValue;
+}
+
 async function loadBatchHistory({ showActivity = false } = {}) {
   if (!batchesPanel || batchesPanel.hidden) {
     return;
@@ -747,7 +762,12 @@ async function loadBatchHistory({ showActivity = false } = {}) {
 
       savedBatches = Array.isArray(batchData.batches) ? batchData.batches : [];
       if (retentionSelect) {
-        retentionSelect.value = settings.retentionDays ? String(settings.retentionDays) : '';
+        const loadedRetentionValue = normalizeRetentionValue(settings.retentionDays);
+        if (savedRetentionValue === null || retentionSelect.value === savedRetentionValue) {
+          retentionSelect.value = loadedRetentionValue;
+        }
+        savedRetentionValue = loadedRetentionValue;
+        updateRetentionSaveButton();
       }
       renderBatches();
     } catch (error) {
@@ -805,11 +825,13 @@ async function clearAllBatches() {
 async function saveRetentionSetting() {
   try {
     const value = retentionSelect?.value || '';
-    await fetchJson('/api/storage-settings', {
+    const settings = await fetchJson('/api/storage-settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ retentionDays: value ? Number(value) : null }),
     });
+    savedRetentionValue = normalizeRetentionValue(settings.retentionDays);
+    updateRetentionSaveButton();
     await loadBatchHistory();
     clearPicturesMessage();
   } catch (error) {
@@ -817,17 +839,20 @@ async function saveRetentionSetting() {
   }
 }
 
-function toggleBatchesPanel() {
+function setBatchHistoryOpen(isOpen) {
   if (!batchesPanel) {
     return;
   }
 
-  batchesPanel.hidden = !batchesPanel.hidden;
-  picturesPanel?.classList.toggle('history-open', !batchesPanel.hidden);
+  batchesPanel.hidden = !isOpen;
+  picturesPanel?.classList.toggle('history-open', isOpen);
   applyGridLayout();
-  batchesBtn?.classList.toggle('active', !batchesPanel.hidden);
-  if (!batchesPanel.hidden) {
+  batchesBtn?.classList.toggle('active', isOpen);
+  if (isOpen) {
     loadBatchHistory({ showActivity: true });
+    closeBatchesBtn?.focus();
+  } else {
+    batchesBtn?.focus();
   }
   if (picturesView === 'grid') {
     renderPictures(latestFiles);
@@ -864,6 +889,7 @@ function renderDesktopControls() {
 
   if (backgroundToggleBtn) {
     backgroundToggleBtn.textContent = `Background: ${backgroundModeEnabled ? 'On' : 'Off'}`;
+    backgroundToggleBtn.disabled = desktopServerState !== 'online';
     backgroundToggleBtn.setAttribute('aria-pressed', String(backgroundModeEnabled));
     backgroundToggleBtn.setAttribute(
       'aria-label',
@@ -874,6 +900,9 @@ function renderDesktopControls() {
 
 function setDesktopServerState(state) {
   desktopServerState = state || 'offline';
+  if (desktopServerState !== 'online') {
+    backgroundModeEnabled = false;
+  }
   renderDesktopControls();
 }
 
@@ -887,9 +916,8 @@ async function syncDesktopControls() {
       window.snapOverLAN.getServerState(),
       window.snapOverLAN.getBackgroundMode(),
     ]);
+    backgroundModeEnabled = server?.state === 'online' && Boolean(background);
     setDesktopServerState(server?.state);
-    backgroundModeEnabled = Boolean(background);
-    renderDesktopControls();
     if (server?.state === 'error' && server.error) {
       renderStatus({ state: 'offline', message: server.error });
     }
@@ -1849,7 +1877,7 @@ backgroundToggleBtn?.addEventListener('click', async () => {
   } catch (error) {
     console.error('Could not change background mode:', error);
   } finally {
-    backgroundToggleBtn.disabled = false;
+    renderDesktopControls();
   }
 });
 
@@ -1870,8 +1898,10 @@ document.addEventListener('keydown', (event) => {
 });
 
 downloadAllBtn.addEventListener('click', downloadAllPictures);
-batchesBtn?.addEventListener('click', toggleBatchesPanel);
+batchesBtn?.addEventListener('click', () => setBatchHistoryOpen(true));
+closeBatchesBtn?.addEventListener('click', () => setBatchHistoryOpen(false));
 saveRetentionBtn?.addEventListener('click', saveRetentionSetting);
+retentionSelect?.addEventListener('change', updateRetentionSaveButton);
 clearBatchesBtn?.addEventListener('click', clearAllBatches);
 gridCountSelect?.addEventListener('change', () => {
   if (!GRID_COUNT_OPTIONS.includes(gridCountSelect.value)) {
@@ -1975,5 +2005,9 @@ if (window.ResizeObserver) {
 
 refreshDashboard({ source: 'initial' });
 syncDesktopControls();
+window.snapOverLAN?.onDesktopStateChanged?.(({ server, backgroundMode }) => {
+  backgroundModeEnabled = server?.state === 'online' && Boolean(backgroundMode);
+  setDesktopServerState(server?.state);
+});
 startUploadStatusRefresh();
 startAutoRefresh();

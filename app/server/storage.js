@@ -17,6 +17,8 @@ const DEFAULT_STORAGE_SETTINGS = {
   retentionDays: null,
 };
 const BATCH_ID_PATTERN = /^batch_[a-zA-Z0-9_-]+$/;
+const DAY_MS = 24 * 60 * 60 * 1000;
+let retentionCleanupQueue = Promise.resolve();
 
 const ALLOWED_VIDEO_MIME_TYPES = new Set([
   'video/mp4',
@@ -274,6 +276,41 @@ const getStorageSettings = async () => ({
   ...await readJsonFile(STORAGE_SETTINGS_PATH, {}),
 });
 
+const applyBatchRetention = ({ now = new Date() } = {}) => {
+  const cleanup = async () => {
+    const settings = await getStorageSettings();
+    const retentionDays = Number(settings.retentionDays);
+    if (!Number.isFinite(retentionDays) || retentionDays <= 0) {
+      return [];
+    }
+
+    const cutoff = now.getTime() - (retentionDays * DAY_MS);
+    const batches = await listBatches();
+    const expiredBatchIds = batches
+      .filter((batch) => {
+        const createdAt = new Date(batch.createdAt).getTime();
+        return Number.isFinite(createdAt) && createdAt < cutoff;
+      })
+      .map((batch) => batch.id);
+
+    if (expiredBatchIds.length === 0) {
+      return [];
+    }
+
+    await Promise.all(expiredBatchIds.map((id) => (
+      fs.rm(resolveBatchDir(id), { recursive: true, force: true })
+    )));
+    if (expiredBatchIds.includes(await getCurrentBatchId())) {
+      await selectNewestRemainingBatch();
+    }
+    return expiredBatchIds;
+  };
+
+  const cleanupPromise = retentionCleanupQueue.then(cleanup, cleanup);
+  retentionCleanupQueue = cleanupPromise.catch(() => {});
+  return cleanupPromise;
+};
+
 const updateStorageSettings = async (settings = {}) => {
   const rawRetentionDays = settings.retentionDays;
   const retentionDays = rawRetentionDays === null || rawRetentionDays === undefined || rawRetentionDays === ''
@@ -288,6 +325,7 @@ const updateStorageSettings = async (settings = {}) => {
     retentionDays: retentionDays && retentionDays > 0 ? retentionDays : null,
   };
   await writeJsonFile(STORAGE_SETTINGS_PATH, nextSettings);
+  await applyBatchRetention();
   return nextSettings;
 };
 
@@ -322,6 +360,7 @@ const ensureStorageDirectories = async () => {
   await fs.mkdir(BATCHES_DIR, { recursive: true });
   await fs.mkdir(UPLOAD_TEMP_DIR, { recursive: true });
   await migrateLegacyLatestFiles();
+  await applyBatchRetention();
 };
 
 const removeUploadedFiles = async (files = []) => {
@@ -338,6 +377,7 @@ const removeUploadBatch = async (req) => {
 
 const finalizeUploadedBatch = async (req) => {
   if (!req.files?.length || !req.uploadBatchId) {
+    await applyBatchRetention();
     return [];
   }
 
@@ -345,6 +385,7 @@ const finalizeUploadedBatch = async (req) => {
     createdAt: req.uploadBatchCreatedAt,
   });
   await setCurrentBatchId(req.uploadBatchId);
+  await applyBatchRetention();
   return toUploadedFileRecords(req.files);
 };
 

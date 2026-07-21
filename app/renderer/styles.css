@@ -163,6 +163,10 @@ h3 {
   opacity: 0.62;
 }
 
+#backgroundToggleBtn:disabled {
+  cursor: default;
+}
+
 .header-button {
   height: 38px;
   border-radius: 12px;
@@ -472,7 +476,7 @@ h3 {
 .batches-toolbar {
   min-width: 0;
   display: grid;
-  grid-template-columns: auto minmax(120px, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(120px, 1fr) auto auto;
   align-items: center;
   gap: 7px;
 }
@@ -601,8 +605,17 @@ h3 {
   gap: var(--grid-gap, 12px);
 }
 
-.pictures-panel.history-open .photo-grid {
-  --grid-gap: 8px;
+.pictures-panel.history-open .pictures-header,
+.pictures-panel.history-open #emptyState,
+.pictures-panel.history-open #photoGrid {
+  display: none;
+}
+
+.pictures-panel.history-open .batches-panel {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  max-height: none;
 }
 
 .media-loading {

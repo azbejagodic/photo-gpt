@@ -12,6 +12,7 @@ const mainSource = await readFile(path.join(projectRoot, 'app', 'main.js'), 'utf
 const preloadSource = await readFile(path.join(projectRoot, 'app', 'preload.cjs'), 'utf8');
 const rendererMarkup = await readFile(path.join(projectRoot, 'app', 'renderer', 'index.html'), 'utf8');
 const rendererStyles = await readFile(path.join(projectRoot, 'app', 'renderer', 'styles.css'), 'utf8');
+const rendererSource = await readFile(path.join(projectRoot, 'app', 'renderer', 'app.js'), 'utf8');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -48,7 +49,16 @@ test('preload exposes only the scoped server and background methods', () => {
   assert.match(preloadSource, /stopServer/);
   assert.match(preloadSource, /getBackgroundMode/);
   assert.match(preloadSource, /setBackgroundMode/);
+  assert.match(preloadSource, /onDesktopStateChanged/);
   assert.doesNotMatch(preloadSource, /ipcRenderer\.(?:send|sendSync)|require:\s*\(/);
+});
+
+test('background mode is limited to an online server', () => {
+  assert.match(mainSource, /serverState !== 'online' && backgroundMode/);
+  assert.match(mainSource, /nextValue && serverState !== 'online'/);
+  assert.match(mainSource, /label: `Background Mode:[\s\S]*?enabled: serverIsRunning/);
+  assert.match(rendererSource, /backgroundToggleBtn\.disabled = desktopServerState !== 'online'/);
+  assert.match(rendererSource, /desktopServerState !== 'online'[\s\S]*?backgroundModeEnabled = false/);
 });
 
 test('header controls are compact, accessible, and preserve existing actions', () => {
@@ -58,6 +68,21 @@ test('header controls are compact, accessible, and preserve existing actions', (
   assert.match(rendererMarkup, /id="qrBtn"/);
   assert.match(rendererMarkup, /id="refreshBtn"/);
   assert.match(rendererStyles, /\.header-toggle:focus-visible/);
+  assert.match(rendererStyles, /#backgroundToggleBtn:disabled\s*{\s*cursor:\s*default;/);
+});
+
+test('history uses the full pictures workspace and provides a return control', () => {
+  assert.match(rendererMarkup, /id="closeBatchesBtn"[^>]*>Back to Pictures<\/button>/);
+  assert.match(rendererSource, /setBatchHistoryOpen\(true\)/);
+  assert.match(rendererSource, /setBatchHistoryOpen\(false\)/);
+  assert.match(rendererStyles, /\.pictures-panel\.history-open #photoGrid[\s\S]*?display:\s*none/);
+  assert.match(rendererStyles, /\.pictures-panel\.history-open \.batches-panel[\s\S]*?flex:\s*1 1 auto/);
+});
+
+test('retention Save is disabled only when the selected value is already saved', () => {
+  assert.match(rendererSource, /savedRetentionValue !== null[\s\S]*?retentionSelect\.value === savedRetentionValue/);
+  assert.match(rendererSource, /savedRetentionValue = normalizeRetentionValue\(settings\.retentionDays\)[\s\S]*?updateRetentionSaveButton\(\)/);
+  assert.match(rendererSource, /retentionSelect\?\.addEventListener\('change', updateRetentionSaveButton\)/);
 });
 
 test('server rejects a duplicate instance and exits cleanly over owned IPC', async (t) => {

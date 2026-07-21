@@ -173,6 +173,7 @@ const updateTrayMenu = () => {
     },
     {
       label: `Background Mode: ${backgroundMode ? 'On' : 'Off'}`,
+      enabled: serverIsRunning,
       click: () => {
         setBackgroundMode(!backgroundMode).catch((error) => console.error(error));
       },
@@ -188,6 +189,14 @@ const updateTrayMenu = () => {
 const setServerState = (nextState, error = '') => {
   serverState = nextState;
   serverError = error;
+  if (serverState !== 'online' && backgroundMode) {
+    backgroundMode = false;
+    saveSettings().catch((saveError) => {
+      console.error('Could not save disabled background mode:', saveError);
+    });
+    openMainWindow().catch((openError) => console.error(openError));
+    destroyTray();
+  }
   updateTrayMenu();
   sendDesktopState();
 };
@@ -538,6 +547,9 @@ const destroyTray = () => {
 
 async function setBackgroundMode(enabled) {
   const nextValue = Boolean(enabled);
+  if (nextValue && serverState !== 'online') {
+    return false;
+  }
   if (backgroundMode === nextValue) {
     return backgroundMode;
   }

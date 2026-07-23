@@ -48,7 +48,6 @@ let serverOperation = null;
 let serverOperationType = '';
 let verifiedShutdownToken = '';
 let backgroundMode = false;
-let serverAutoStart = true;
 let quitOperation = null;
 let allowQuit = false;
 
@@ -172,7 +171,6 @@ const loadSettings = async () => {
   try {
     const settings = JSON.parse(await fs.readFile(getSettingsPath(), 'utf8'));
     backgroundMode = settings.backgroundMode === true;
-    serverAutoStart = settings.serverAutoStart !== false;
   } catch (error) {
     if (error.code !== 'ENOENT') {
       console.warn('Could not read SnapOverLAN desktop settings:', error);
@@ -185,7 +183,6 @@ const saveSettings = async () => {
   await fs.mkdir(path.dirname(settingsPath), { recursive: true });
   await fs.writeFile(settingsPath, `${JSON.stringify({
     backgroundMode,
-    serverAutoStart,
   }, null, 2)}\n`, 'utf8');
 };
 
@@ -209,7 +206,6 @@ const updateTrayMenu = () => {
     return;
   }
 
-  const serverBusy = serverState === 'starting' || serverState === 'stopping';
   const serverIsRunning = serverState === 'online';
   tray.setContextMenu(Menu.buildFromTemplate([
     {
@@ -217,14 +213,6 @@ const updateTrayMenu = () => {
       click: () => openMainWindow(),
     },
     { type: 'separator' },
-    {
-      label: serverIsRunning ? 'Stop Server' : 'Start Server',
-      enabled: !serverBusy,
-      click: () => {
-        const operation = serverIsRunning ? stopServer() : startServer();
-        operation.catch((error) => console.error(error));
-      },
-    },
     {
       label: `Background Mode: ${backgroundMode ? 'On' : 'Off'}`,
       enabled: serverIsRunning,
@@ -298,17 +286,12 @@ const waitForPortRelease = async (timeoutMs) => {
   return !(await isPortInUse());
 };
 
-const startServerInternal = async ({ persistAutoStart = true } = {}) => {
+const startServerInternal = async () => {
   if (serverState === 'online') {
     return getServerStatePayload();
   }
 
   setServerState('starting');
-  if (persistAutoStart) {
-    serverAutoStart = true;
-    await saveSettings();
-  }
-
   const existingIdentity = await getServerIdentity();
   if (existingIdentity?.shutdownToken) {
     verifiedShutdownToken = existingIdentity.shutdownToken;
@@ -425,15 +408,15 @@ const startServerInternal = async ({ persistAutoStart = true } = {}) => {
   return getServerStatePayload();
 };
 
-const startServer = (options) => {
+const startServer = () => {
   if (serverOperation) {
     if (serverOperationType === 'start') {
       return serverOperation;
     }
-    return serverOperation.then(() => startServer(options));
+    return serverOperation.then(() => startServer());
   }
   serverOperationType = 'start';
-  const operation = startServerInternal(options)
+  const operation = startServerInternal()
     .catch((error) => {
       if (serverState !== 'error') {
         setServerState('error', error.message || 'The server failed to start.');
@@ -450,12 +433,7 @@ const startServer = (options) => {
   return serverOperation;
 };
 
-const stopServerInternal = async ({ persistAutoStart = true } = {}) => {
-  if (persistAutoStart) {
-    serverAutoStart = false;
-    await saveSettings();
-  }
-
+const stopServerInternal = async () => {
   const serverProcess = ownedServerProcess;
   const identity = serverProcess
     ? null
@@ -530,15 +508,15 @@ const stopServerInternal = async ({ persistAutoStart = true } = {}) => {
   return getServerStatePayload();
 };
 
-const stopServer = (options) => {
+const stopServer = () => {
   if (serverOperation) {
     if (serverOperationType === 'stop') {
       return serverOperation;
     }
-    return serverOperation.then(() => stopServer(options));
+    return serverOperation.then(() => stopServer());
   }
   serverOperationType = 'stop';
-  const operation = stopServerInternal(options).finally(() => {
+  const operation = stopServerInternal().finally(() => {
     if (serverOperation === operation) {
       serverOperation = null;
       serverOperationType = '';
@@ -571,6 +549,7 @@ const showMainWindow = () => {
 
 const createWindow = async () => {
   mainWindow = new BrowserWindow({
+    show: false,
     width: 960,
     height: 600,
     minWidth: 860,
@@ -703,7 +682,7 @@ async function requestQuit() {
     }
     if (serverLaunchMode !== 'offline' || ownedServerProcess) {
       try {
-        await stopServer({ persistAutoStart: false });
+        await stopServer();
       } catch (error) {
         console.error('Could not stop the SnapOverLAN server during quit:', error);
       }
@@ -727,8 +706,7 @@ const handleServerControl = async (operation) => {
 };
 
 ipcMain.handle('server:get-state', () => getServerStatePayload());
-ipcMain.handle('server:start', () => handleServerControl(() => startServer()));
-ipcMain.handle('server:stop', () => handleServerControl(() => stopServer()));
+ipcMain.handle('server:retry', () => handleServerControl(() => startServer()));
 ipcMain.handle('background:get', () => backgroundMode);
 ipcMain.handle('background:set', (_event, enabled) => setBackgroundMode(enabled));
 
@@ -744,14 +722,13 @@ if (!gotLock) {
   electronApp.whenReady().then(async () => {
     await loadSettings();
     await createWindow();
+    await startServer().catch((error) => {
+      console.error('SnapOverLAN server startup failed:', error);
+    });
     if (backgroundMode) {
       createTray();
     }
-    if (serverAutoStart) {
-      startServer({ persistAutoStart: false }).catch((error) => {
-        console.error('SnapOverLAN server startup failed:', error);
-      });
-    }
+    showMainWindow();
   }).catch((error) => {
     dialog.showErrorBox('SnapOverLAN could not start', error.message || String(error));
     allowQuit = true;

@@ -148,6 +148,10 @@ h3 {
   transition: background 140ms ease, border-color 140ms ease, opacity 140ms ease;
 }
 
+.header-toggle[hidden] {
+  display: none;
+}
+
 .header-toggle[aria-pressed="true"] {
   border-color: rgba(124, 244, 198, 0.56);
   background: rgba(5, 169, 135, 0.2);

@@ -2,8 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('snapOverLAN', Object.freeze({
   getServerState: () => ipcRenderer.invoke('server:get-state'),
-  startServer: () => ipcRenderer.invoke('server:start'),
-  stopServer: () => ipcRenderer.invoke('server:stop'),
+  retryServer: () => ipcRenderer.invoke('server:retry'),
   getBackgroundMode: () => ipcRenderer.invoke('background:get'),
   setBackgroundMode: (enabled) => ipcRenderer.invoke('background:set', Boolean(enabled)),
   onDesktopStateChanged: (callback) => {

@@ -69,13 +69,13 @@ function waitForExit(child, timeoutMs = 5000) {
   ]);
 }
 
-test('preload exposes only the scoped server and background methods', () => {
+test('preload exposes only automatic server status, retry, and background methods', () => {
   assert.match(mainSource, /preload:\s*preloadPath/);
   assert.match(mainSource, /contextIsolation:\s*true/);
   assert.match(mainSource, /nodeIntegration:\s*false/);
   assert.match(preloadSource, /getServerState/);
-  assert.match(preloadSource, /startServer/);
-  assert.match(preloadSource, /stopServer/);
+  assert.match(preloadSource, /retryServer/);
+  assert.doesNotMatch(preloadSource, /startServer|stopServer|server:start|server:stop/);
   assert.match(preloadSource, /getBackgroundMode/);
   assert.match(preloadSource, /setBackgroundMode/);
   assert.match(preloadSource, /onDesktopStateChanged/);
@@ -97,7 +97,7 @@ test('closing with Background Mode off quits and stops the server', () => {
   assert.match(windowCloseSource, /requestQuit\(\)/);
   assert.match(
     requestQuitSource,
-    /serverLaunchMode !== 'offline' \|\| ownedServerProcess[\s\S]*?await stopServer\(\{ persistAutoStart: false \}\)/,
+    /serverLaunchMode !== 'offline' \|\| ownedServerProcess[\s\S]*?await stopServer\(\)/,
   );
 });
 
@@ -106,7 +106,7 @@ test('closing with Background Mode on hides the window and keeps the server aliv
   assert.match(windowCloseSource, /if \(backgroundMode\) \{[\s\S]*?mainWindow\.hide\(\)[\s\S]*?return/);
 });
 
-test('tray Quit, before-quit, manual stop, and repeated quits share safe lifecycle paths', () => {
+test('tray Quit, before-quit, and repeated quits share one shutdown path', () => {
   assert.match(requestQuitSource, /if \(serverOperation\) \{[\s\S]*?await serverOperation\.catch/);
   assert.match(
     requestQuitSource,
@@ -114,10 +114,7 @@ test('tray Quit, before-quit, manual stop, and repeated quits share safe lifecyc
   );
   assert.match(mainSource, /label: 'Quit',[\s\S]*?click: \(\) => requestQuit\(\)/);
   assert.match(mainSource, /electronApp\.on\('before-quit',[\s\S]*?requestQuit\(\)/);
-  assert.match(
-    mainSource,
-    /ipcMain\.handle\('server:stop', \(\) => handleServerControl\(\(\) => stopServer\(\)\)\)/,
-  );
+  assert.doesNotMatch(mainSource, /label: (?:serverIsRunning \? )?'(?:Start|Stop) Server/);
 });
 
 test('unrelated processes are never killed; only verified SnapOverLAN servers receive shutdown', () => {
@@ -169,32 +166,51 @@ test('server identity contract recognizes current, legacy, and unrelated respons
   assert.match(mainSource, /if \(existingIdentity\?\.shutdownToken\)/);
 });
 
-test('one toggle action and concurrent stop calls share one operation', () => {
-  assert.equal(
-    rendererSource.match(/serverToggleBtn\?\.addEventListener\('click'/g)?.length,
-    1,
-  );
-  assert.match(rendererSource, /if \(!window\.snapOverLAN \|\| serverToggleOperation\)/);
-  assert.match(rendererSource, /serverToggleOperation = shouldStop[\s\S]*?window\.snapOverLAN\.stopServer\(\)/);
-  assert.match(rendererSource, /serverToggleOperation = null;[\s\S]*?await refreshDashboard/);
-  assert.match(rendererSource, /server\?\.state === 'error'[\s\S]*?server\.error/);
-  assert.match(mainSource, /const handleServerControl = async[\s\S]*?return getServerStatePayload\(\)/);
+test('server startup is mandatory, awaited, and cannot start a duplicate', () => {
+  assert.match(mainSource, /show: false/);
   assert.match(
     mainSource,
-    /if \(serverOperationType === 'stop'\) \{[\s\S]*?return serverOperation/,
+    /await createWindow\(\);[\s\S]*?await startServer\(\)\.catch[\s\S]*?showMainWindow\(\)/,
   );
   assert.match(
-    rendererSource,
-    /desktopServerState !== 'starting'[\s\S]*?desktopServerState !== 'stopping'[\s\S]*?setDesktopServerState\('online'\)/,
+    mainSource,
+    /if \(serverOperationType === 'start'\) \{[\s\S]*?return serverOperation/,
   );
-  assert.match(mainSource, /const SERVER_STOP_TIMEOUT_MS = 1000/);
-  assert.match(mainSource, /const identity = serverProcess[\s\S]*?\? null[\s\S]*?: await getServerIdentity\(\)/);
+  assert.match(mainSource, /if \(existingIdentity\?\.shutdownToken\)[\s\S]*?serverLaunchMode = 'reused'/);
+  assert.doesNotMatch(mainSource, /serverAutoStart/);
+});
+
+test('manual server controls are removed and retry is error-only', () => {
+  assert.doesNotMatch(rendererMarkup, /id="serverToggleBtn"/);
+  assert.doesNotMatch(rendererSource, /serverToggleBtn|serverToggleOperation|\.startServer\(|\.stopServer\(/);
+  assert.doesNotMatch(mainSource, /ipcMain\.handle\('server:(?:start|stop)'/);
+  assert.match(rendererMarkup, /id="retryServerBtn"[^>]*hidden/);
+  assert.match(rendererSource, /retryServerBtn\.hidden = desktopServerState !== 'error'/);
+  assert.match(rendererSource, /window\.snapOverLAN\.retryServer\(\)/);
+  assert.match(rendererSource, /server\?\.state === 'error'[\s\S]*?server\.error/);
+  assert.match(mainSource, /const handleServerControl = async[\s\S]*?return getServerStatePayload\(\)/);
+});
+
+test('settings persist only Background Mode and safely ignore legacy fields', () => {
+  assert.doesNotMatch(mainSource, /serverAutoStart/);
+  assert.match(mainSource, /backgroundMode = settings\.backgroundMode === true/);
+  assert.match(mainSource, /JSON\.stringify\(\{\s*backgroundMode,\s*\}/);
+});
+
+test('disabling Background Mode restores the window without stopping the server', () => {
+  const backgroundModeSource = mainSource.match(
+    /async function setBackgroundMode[\s\S]*?\n\}/,
+  )?.[0];
+  assert.ok(backgroundModeSource);
+  assert.match(backgroundModeSource, /if \(backgroundMode\) \{[\s\S]*?createTray\(\)/);
+  assert.match(backgroundModeSource, /else \{[\s\S]*?await openMainWindow\(\);[\s\S]*?destroyTray\(\)/);
+  assert.doesNotMatch(backgroundModeSource, /stopServer\(/);
 });
 
 test('header controls are compact, accessible, and preserve existing actions', () => {
   assert.match(rendererMarkup, /id="connectionPill"/);
-  assert.match(rendererMarkup, /id="serverToggleBtn"[^>]+aria-label=/);
   assert.match(rendererMarkup, /id="backgroundToggleBtn"[^>]+aria-label=/);
+  assert.match(rendererMarkup, /id="retryServerBtn"/);
   assert.match(rendererMarkup, /id="qrBtn"/);
   assert.match(rendererMarkup, /id="refreshBtn"/);
   assert.match(rendererStyles, /\.header-toggle:focus-visible/);

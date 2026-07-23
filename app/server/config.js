@@ -5,14 +5,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
-const PORT = 8787;
+// Legacy PHOTO_GPT_* names are fallbacks for existing developer scripts and installs.
+const legacyEnv = (name) => process.env[`PHOTO_GPT_${name}`];
+const snapEnv = (name) => process.env[`SNAPOVERLAN_${name}`] || legacyEnv(name);
+const configuredPort = Number(snapEnv('PORT'));
+const PORT = Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort <= 65535
+  ? configuredPort
+  : 8787;
 const HOST = '0.0.0.0';
 const MAX_FILES = 20;
 const MAX_FILE_SIZE = 12 * 1024 * 1024;
 const MAX_VIDEO_FILE_SIZE = 100 * 1024 * 1024;
-// Legacy PHOTO_GPT_* names are fallbacks for existing developer scripts and installs.
-const legacyEnv = (name) => process.env[`PHOTO_GPT_${name}`];
-const snapEnv = (name) => process.env[`SNAPOVERLAN_${name}`] || legacyEnv(name);
 
 const DATA_ROOT = snapEnv('DATA_DIR') || path.join(PROJECT_ROOT, 'data');
 const DATA_DIR = path.join(DATA_ROOT, 'latest');

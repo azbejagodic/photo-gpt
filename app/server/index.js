@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import crypto from 'crypto';
 import path from 'path';
 import { promises as fs } from 'fs';
 import { pathToFileURL } from 'url';
@@ -18,8 +19,14 @@ import { getPhoneUrlRecords } from './lan.js';
 import { ensureStorageDirectories } from './storage.js';
 import { createApiRouter } from './routes/api.js';
 import { createFilesRouter } from './routes/files.js';
+import {
+  SERVER_APPLICATION,
+  SERVER_CONTROL_ID,
+  SERVER_PROTOCOL_VERSION,
+} from './identity.js';
 
 const app = express();
+const shutdownToken = crypto.randomBytes(32).toString('hex');
 let serverInstance = null;
 let shutdownPromise = null;
 
@@ -36,6 +43,8 @@ const getServerStatus = () => {
 
   return {
     status: serverInstance?.listening ? 'listening' : 'starting',
+    application: SERVER_APPLICATION,
+    protocolVersion: SERVER_PROTOCOL_VERSION,
     configuredHost: HOST,
     bindHost: boundAddress || HOST,
     port: boundPort || PORT,
@@ -62,6 +71,39 @@ const appendStartupLog = async (event, details = {}) => {
     ...details,
   })}\n`);
 };
+
+const isLoopbackRequest = (req) => {
+  const address = req.socket.remoteAddress;
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+};
+
+app.get('/api/server-control', (req, res) => {
+  if (!isLoopbackRequest(req)) {
+    res.sendStatus(404);
+    return;
+  }
+  res.json({
+    service: SERVER_CONTROL_ID,
+    application: SERVER_APPLICATION,
+    protocolVersion: SERVER_PROTOCOL_VERSION,
+    shutdownToken,
+    server: getServerStatus(),
+  });
+});
+
+app.post('/api/server-shutdown', (req, res) => {
+  const suppliedToken = req.get('x-snapoverlan-shutdown-token') || '';
+  const suppliedTokenBuffer = Buffer.from(suppliedToken);
+  const shutdownTokenBuffer = Buffer.from(shutdownToken);
+  const validToken = suppliedTokenBuffer.length === shutdownTokenBuffer.length
+    && crypto.timingSafeEqual(suppliedTokenBuffer, shutdownTokenBuffer);
+  if (!isLoopbackRequest(req) || !validToken) {
+    res.sendStatus(404);
+    return;
+  }
+  res.status(202).json({ stopping: true });
+  setImmediate(() => shutdownServer('localhost-control'));
+});
 
 app.use('/api', express.json({ limit: '32kb' }), createApiRouter({ getServerStatus }));
 app.use('/files', createFilesRouter());

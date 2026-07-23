@@ -13,6 +13,10 @@ import http from 'http';
 import net from 'net';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import {
+  classifyServerStatus,
+  SERVER_CONTROL_ID,
+} from './server/identity.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,9 +29,12 @@ const trayIconPath = path.join(projectRoot, 'assets', 'electron', 'tray-24.png')
 
 const PORT = 8787;
 const SERVER_ORIGIN = `http://localhost:${PORT}`;
-const SERVER_STATUS_URL = `${SERVER_ORIGIN}/api/server-status`;
+const SERVER_STATUS_URL = `http://127.0.0.1:${PORT}/api/server-status`;
+const SERVER_CONTROL_URL = `http://127.0.0.1:${PORT}/api/server-control`;
+const SERVER_SHUTDOWN_URL = `http://127.0.0.1:${PORT}/api/server-shutdown`;
 const SERVER_STOP_TIMEOUT_MS = 4000;
 const SERVER_FORCE_STOP_TIMEOUT_MS = 1500;
+const LEGACY_SERVER_ERROR = 'An older SnapOverLAN server is running. Stop it once and restart the app.';
 
 electronApp.setName('SnapOverLAN');
 
@@ -38,6 +45,7 @@ let serverLaunchMode = 'offline';
 let serverState = 'offline';
 let serverError = '';
 let serverOperation = null;
+let serverOperationType = '';
 let backgroundMode = false;
 let serverAutoStart = true;
 let quitOperation = null;
@@ -74,12 +82,57 @@ const getJson = (url) => new Promise((resolve, reject) => {
   });
 });
 
-const getServerStatus = async () => {
+const postServerShutdown = (token) => new Promise((resolve, reject) => {
+  const req = http.request(SERVER_SHUTDOWN_URL, {
+    method: 'POST',
+    headers: {
+      'x-snapoverlan-shutdown-token': token,
+    },
+  }, (res) => {
+    res.resume();
+    if (res.statusCode !== 202) {
+      reject(new Error(`Shutdown request failed (${res.statusCode})`));
+      return;
+    }
+    resolve();
+  });
+  req.on('error', reject);
+  req.setTimeout(1500, () => {
+    req.destroy(new Error('Timed out requesting server shutdown'));
+  });
+  req.end();
+});
+
+const getServerIdentity = async () => {
   try {
-    const status = await getJson(SERVER_STATUS_URL);
-    return status?.status === 'listening' ? status : null;
+    const control = await getJson(SERVER_CONTROL_URL);
+    const kind = classifyServerStatus(control?.server);
+    if (control?.service !== SERVER_CONTROL_ID
+      || typeof control.shutdownToken !== 'string'
+      || !/^[a-f0-9]{64}$/.test(control.shutdownToken)
+      || kind === 'unrelated') {
+      throw new Error('Invalid SnapOverLAN control response');
+    }
+    return {
+      kind,
+      server: control.server,
+      shutdownToken: control.shutdownToken,
+    };
   } catch (_err) {
-    return null;
+    try {
+      const status = await getJson(SERVER_STATUS_URL);
+      const kind = classifyServerStatus(status);
+      if (kind === 'unrelated') {
+        return null;
+      }
+      return {
+        kind,
+        server: status,
+        shutdownToken: '',
+      };
+    } catch (_statusError) {
+      return null;
+    }
   }
 };
 
@@ -206,9 +259,9 @@ const waitForServer = async (serverProcess) => {
     if (serverProcess.exitCode !== null || ownedServerProcess !== serverProcess) {
       return null;
     }
-    const status = await getServerStatus();
-    if (status) {
-      return status;
+    const identity = await getServerIdentity();
+    if (identity?.shutdownToken) {
+      return identity;
     }
     await delay(100);
   }
@@ -233,6 +286,17 @@ const waitForProcessExit = (serverProcess, timeoutMs) => new Promise((resolve) =
   serverProcess.once('exit', handleExit);
 });
 
+const waitForPortRelease = async (timeoutMs) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await isPortInUse())) {
+      return true;
+    }
+    await delay(100);
+  }
+  return !(await isPortInUse());
+};
+
 const startServerInternal = async ({ persistAutoStart = true } = {}) => {
   if (serverState === 'online') {
     return getServerStatePayload();
@@ -244,15 +308,24 @@ const startServerInternal = async ({ persistAutoStart = true } = {}) => {
     await saveSettings();
   }
 
-  const existingStatus = await getServerStatus();
-  if (existingStatus) {
+  const existingIdentity = await getServerIdentity();
+  if (existingIdentity?.shutdownToken) {
     serverLaunchMode = 'reused';
     await writeStartupLog('server-reused', {
-      serverStatus: existingStatus,
+      serverStatus: existingIdentity.server,
       logFile: getStartupLogPath(),
     });
     setServerState('online');
     return getServerStatePayload();
+  }
+  if (existingIdentity?.kind === 'legacy') {
+    setServerState('error', LEGACY_SERVER_ERROR);
+    throw new Error(LEGACY_SERVER_ERROR);
+  }
+  if (existingIdentity?.kind === 'current') {
+    const error = 'SnapOverLAN is running, but its secure local shutdown control is unavailable.';
+    setServerState('error', error);
+    throw new Error(error);
   }
 
   if (await isPortInUse()) {
@@ -333,14 +406,14 @@ const startServerInternal = async ({ persistAutoStart = true } = {}) => {
     const portConflict = await isPortInUse();
     const error = portConflict
       ? `Port ${PORT} is already in use; SnapOverLAN did not start a second server.`
-      : `The local server did not become ready at ${SERVER_STATUS_URL}.`;
+      : `The local server did not become ready at ${SERVER_ORIGIN}.`;
     setServerState('error', error);
     throw new Error(error);
   }
 
   serverLaunchMode = 'started';
   await writeStartupLog('server-started', {
-    serverStatus: status,
+    serverStatus: status.server,
     logFile: logPath,
   });
   setServerState('online');
@@ -349,9 +422,13 @@ const startServerInternal = async ({ persistAutoStart = true } = {}) => {
 
 const startServer = (options) => {
   if (serverOperation) {
+    if (serverOperationType === 'start') {
+      return serverOperation;
+    }
     return serverOperation.then(() => startServer(options));
   }
-  serverOperation = startServerInternal(options)
+  serverOperationType = 'start';
+  const operation = startServerInternal(options)
     .catch((error) => {
       if (serverState !== 'error') {
         setServerState('error', error.message || 'The server failed to start.');
@@ -359,8 +436,12 @@ const startServer = (options) => {
       throw error;
     })
     .finally(() => {
-      serverOperation = null;
+      if (serverOperation === operation) {
+        serverOperation = null;
+        serverOperationType = '';
+      }
     });
+  serverOperation = operation;
   return serverOperation;
 };
 
@@ -371,10 +452,10 @@ const stopServerInternal = async ({ persistAutoStart = true } = {}) => {
   }
 
   const serverProcess = ownedServerProcess;
-  if (!serverProcess) {
-    const externalStatus = await getServerStatus();
-    if (externalStatus) {
-      const error = 'The server is running outside this Electron app and cannot be stopped here.';
+  const identity = await getServerIdentity();
+  if (!identity && !serverProcess) {
+    if (await isPortInUse()) {
+      const error = `Port ${PORT} is in use by an application that is not a verified SnapOverLAN server.`;
       setServerState('error', error);
       throw new Error(error);
     }
@@ -382,20 +463,40 @@ const stopServerInternal = async ({ persistAutoStart = true } = {}) => {
     setServerState('offline');
     return getServerStatePayload();
   }
+  if (!serverProcess && identity?.kind === 'legacy') {
+    setServerState('error', LEGACY_SERVER_ERROR);
+    throw new Error(LEGACY_SERVER_ERROR);
+  }
+  if (!serverProcess && identity?.kind === 'current' && !identity.shutdownToken) {
+    const error = 'SnapOverLAN is running, but its secure local shutdown control is unavailable.';
+    setServerState('error', error);
+    throw new Error(error);
+  }
 
   setServerState('stopping');
   let exited = false;
   let forced = false;
-  try {
-    if (serverProcess.connected) {
-      serverProcess.send({ type: 'snapoverlan:shutdown' });
-      exited = await waitForProcessExit(serverProcess, SERVER_STOP_TIMEOUT_MS);
+  if (identity?.shutdownToken) {
+    try {
+      await postServerShutdown(identity.shutdownToken);
+      exited = serverProcess
+        ? await waitForProcessExit(serverProcess, SERVER_STOP_TIMEOUT_MS)
+        : await waitForPortRelease(SERVER_STOP_TIMEOUT_MS);
+    } catch (error) {
+      console.warn('Graceful server shutdown failed:', error);
     }
-  } catch (error) {
-    console.warn('Graceful server shutdown failed:', error);
   }
 
-  if (!exited && serverProcess.exitCode === null) {
+  if (!exited && serverProcess?.connected) {
+    try {
+      serverProcess.send({ type: 'snapoverlan:shutdown' });
+      exited = await waitForProcessExit(serverProcess, SERVER_STOP_TIMEOUT_MS);
+    } catch (error) {
+      console.warn('IPC server shutdown failed:', error);
+    }
+  }
+
+  if (!exited && serverProcess?.exitCode === null) {
     console.warn('Forcing the owned SnapOverLAN server process to stop.');
     forced = true;
     serverProcess.kill();
@@ -405,8 +506,10 @@ const stopServerInternal = async ({ persistAutoStart = true } = {}) => {
   if (ownedServerProcess === serverProcess) {
     ownedServerProcess = null;
   }
-  if (!exited && serverProcess.exitCode === null) {
-    const error = 'The owned server process did not stop cleanly.';
+  if (!exited && (!serverProcess || serverProcess.exitCode === null)) {
+    const error = serverProcess
+      ? 'The owned server process did not stop cleanly.'
+      : 'The reused SnapOverLAN server did not stop cleanly.';
     setServerState('error', error);
     throw new Error(error);
   }
@@ -419,11 +522,19 @@ const stopServerInternal = async ({ persistAutoStart = true } = {}) => {
 
 const stopServer = (options) => {
   if (serverOperation) {
+    if (serverOperationType === 'stop') {
+      return serverOperation;
+    }
     return serverOperation.then(() => stopServer(options));
   }
-  serverOperation = stopServerInternal(options).finally(() => {
-    serverOperation = null;
+  serverOperationType = 'stop';
+  const operation = stopServerInternal(options).finally(() => {
+    if (serverOperation === operation) {
+      serverOperation = null;
+      serverOperationType = '';
+    }
   });
+  serverOperation = operation;
   return serverOperation;
 };
 
@@ -577,10 +688,15 @@ async function requestQuit() {
     return quitOperation;
   }
   quitOperation = (async () => {
-    try {
-      await stopServer({ persistAutoStart: false });
-    } catch (error) {
-      console.error('Could not stop the SnapOverLAN server during quit:', error);
+    if (serverOperation) {
+      await serverOperation.catch(() => {});
+    }
+    if (serverLaunchMode !== 'offline' || ownedServerProcess) {
+      try {
+        await stopServer({ persistAutoStart: false });
+      } catch (error) {
+        console.error('Could not stop the SnapOverLAN server during quit:', error);
+      }
     }
     destroyTray();
     allowQuit = true;
@@ -589,9 +705,20 @@ async function requestQuit() {
   return quitOperation;
 }
 
+const handleServerControl = async (operation) => {
+  try {
+    return await operation();
+  } catch (error) {
+    if (serverState !== 'error') {
+      setServerState('error', error.message || 'Could not change the server state.');
+    }
+    return getServerStatePayload();
+  }
+};
+
 ipcMain.handle('server:get-state', () => getServerStatePayload());
-ipcMain.handle('server:start', () => startServer());
-ipcMain.handle('server:stop', () => stopServer());
+ipcMain.handle('server:start', () => handleServerControl(() => startServer()));
+ipcMain.handle('server:stop', () => handleServerControl(() => stopServer()));
 ipcMain.handle('background:get', () => backgroundMode);
 ipcMain.handle('background:set', (_event, enabled) => setBackgroundMode(enabled));
 

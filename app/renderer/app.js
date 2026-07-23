@@ -104,6 +104,7 @@ let gridCountSetting = GRID_COUNT_OPTIONS.includes(localStorage.getItem(GRID_COU
 let lastServerStatusData = null;
 let statusLastCheckedAt = null;
 let desktopServerState = 'offline';
+let serverToggleOperation = null;
 let backgroundModeEnabled = false;
 const launchParams = new URLSearchParams(window.location.search);
 const SERVER_ORIGIN = 'http://localhost:8787';
@@ -1513,10 +1514,35 @@ async function loadServerStatus({ showActivity = false } = {}) {
       throw new Error(`Server status request failed (${response.status})`);
     }
 
-    lastServerStatusData = await response.json();
+    const status = await response.json();
+    const currentSnapOverLAN = status.status === 'listening'
+      && status.application === 'SnapOverLAN'
+      && status.protocolVersion === 1;
+    const legacySnapOverLAN = status.status === 'listening'
+      && status.application === undefined
+      && status.protocolVersion === undefined
+      && Number.isInteger(status.pid)
+      && typeof status.runtimeDataDir === 'string'
+      && typeof status.latestDir === 'string'
+      && typeof status.uploadTempDir === 'string';
+    if (!currentSnapOverLAN && !legacySnapOverLAN) {
+      throw new Error('Port 8787 is responding, but it is not a verified SnapOverLAN server.');
+    }
+    lastServerStatusData = status;
     statusLastCheckedAt = new Date();
-    setDesktopServerState('online');
-    renderStatus();
+    if (currentSnapOverLAN
+      && desktopServerState !== 'starting'
+      && desktopServerState !== 'stopping') {
+      setDesktopServerState('online');
+    }
+    if (legacySnapOverLAN && !currentSnapOverLAN) {
+      renderStatus({
+        state: 'online',
+        message: 'An older SnapOverLAN server is running. Stop it once and restart the app.',
+      });
+    } else {
+      renderStatus();
+    }
     renderDiagnostics(lastServerStatusData);
     return lastServerStatusData;
   } catch (error) {
@@ -1845,23 +1871,31 @@ refreshBtn.addEventListener('click', () => {
 });
 
 serverToggleBtn?.addEventListener('click', async () => {
-  if (!window.snapOverLAN) {
+  if (!window.snapOverLAN || serverToggleOperation) {
     return;
   }
 
   const shouldStop = desktopServerState === 'online';
   setDesktopServerState(shouldStop ? 'stopping' : 'starting');
+  serverToggleOperation = shouldStop
+    ? window.snapOverLAN.stopServer()
+    : window.snapOverLAN.startServer();
   try {
-    const server = shouldStop
-      ? await window.snapOverLAN.stopServer()
-      : await window.snapOverLAN.startServer();
+    const server = await serverToggleOperation;
     setDesktopServerState(server?.state);
+    if (server?.state === 'error') {
+      renderStatus({
+        state: 'offline',
+        message: server.error || 'Could not change server state.',
+      });
+    }
   } catch (error) {
     const server = await window.snapOverLAN.getServerState().catch(() => ({ state: 'error' }));
     setDesktopServerState(server?.state || 'error');
     renderStatus({ state: 'offline', message: server?.error || error.message || 'Could not change server state.' });
   } finally {
-    refreshDashboard({ source: 'manual' });
+    serverToggleOperation = null;
+    await refreshDashboard({ source: 'manual' });
   }
 });
 

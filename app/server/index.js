@@ -27,8 +27,10 @@ import {
 
 const app = express();
 const shutdownToken = crypto.randomBytes(32).toString('hex');
+const activeSockets = new Set();
 let serverInstance = null;
 let shutdownPromise = null;
+let parentWatchTimer = null;
 
 app.use(cors({
   origin: true,
@@ -136,6 +138,10 @@ const startServer = async ({ host = HOST, port = PORT, log = true } = {}) => {
       resolve(server);
     });
 
+    server.on('connection', (socket) => {
+      activeSockets.add(socket);
+      socket.once('close', () => activeSockets.delete(socket));
+    });
     server.once('error', reject);
   });
 };
@@ -145,17 +151,26 @@ const stopServer = async () => {
     return;
   }
 
+  const server = serverInstance;
+  serverInstance = null;
   await new Promise((resolve, reject) => {
-    serverInstance.close((err) => {
+    const socketCleanupTimer = setTimeout(() => {
+      for (const socket of activeSockets) {
+        socket.destroy();
+      }
+    }, 500);
+    socketCleanupTimer.unref();
+
+    server.close((err) => {
+      clearTimeout(socketCleanupTimer);
       if (err) {
         reject(err);
         return;
       }
       resolve();
     });
-    serverInstance.closeIdleConnections?.();
+    server.closeIdleConnections?.();
   });
-  serverInstance = null;
 };
 
 const watchParentProcess = () => {
@@ -165,7 +180,7 @@ const watchParentProcess = () => {
     return;
   }
 
-  const timer = setInterval(() => {
+  parentWatchTimer = setInterval(() => {
     try {
       process.kill(parentPid, 0);
     } catch (err) {
@@ -174,7 +189,7 @@ const watchParentProcess = () => {
       }
     }
   }, 2000);
-  timer.unref();
+  parentWatchTimer.unref();
 };
 
 const shutdownServer = (reason) => {
@@ -184,6 +199,10 @@ const shutdownServer = (reason) => {
 
   shutdownPromise = (async () => {
     try {
+      if (parentWatchTimer) {
+        clearInterval(parentWatchTimer);
+        parentWatchTimer = null;
+      }
       await appendStartupLog('server-stopping', { reason });
       await stopServer();
       if (process.connected) {
@@ -208,6 +227,7 @@ if (isDirectRun) {
   process.once('SIGTERM', () => shutdownServer('SIGTERM'));
   process.on('message', (message) => {
     if (message?.type === 'snapoverlan:shutdown') {
+      process.send?.({ type: 'snapoverlan:shutdown-accepted' });
       shutdownServer('electron-ipc');
     }
   });

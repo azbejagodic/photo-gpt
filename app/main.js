@@ -32,8 +32,8 @@ const SERVER_ORIGIN = `http://localhost:${PORT}`;
 const SERVER_STATUS_URL = `http://127.0.0.1:${PORT}/api/server-status`;
 const SERVER_CONTROL_URL = `http://127.0.0.1:${PORT}/api/server-control`;
 const SERVER_SHUTDOWN_URL = `http://127.0.0.1:${PORT}/api/server-shutdown`;
-const SERVER_STOP_TIMEOUT_MS = 4000;
-const SERVER_FORCE_STOP_TIMEOUT_MS = 1500;
+const SERVER_STOP_TIMEOUT_MS = 1000;
+const SERVER_FORCE_STOP_TIMEOUT_MS = 500;
 const LEGACY_SERVER_ERROR = 'An older SnapOverLAN server is running. Stop it once and restart the app.';
 
 electronApp.setName('SnapOverLAN');
@@ -46,6 +46,7 @@ let serverState = 'offline';
 let serverError = '';
 let serverOperation = null;
 let serverOperationType = '';
+let verifiedShutdownToken = '';
 let backgroundMode = false;
 let serverAutoStart = true;
 let quitOperation = null;
@@ -310,6 +311,7 @@ const startServerInternal = async ({ persistAutoStart = true } = {}) => {
 
   const existingIdentity = await getServerIdentity();
   if (existingIdentity?.shutdownToken) {
+    verifiedShutdownToken = existingIdentity.shutdownToken;
     serverLaunchMode = 'reused';
     await writeStartupLog('server-reused', {
       serverStatus: existingIdentity.server,
@@ -378,6 +380,7 @@ const startServerInternal = async ({ persistAutoStart = true } = {}) => {
   serverProcess.once('error', (error) => {
     if (ownedServerProcess === serverProcess) {
       ownedServerProcess = null;
+      verifiedShutdownToken = '';
       setServerState('error', `Could not start the server: ${error.message}`);
     }
   });
@@ -386,6 +389,7 @@ const startServerInternal = async ({ persistAutoStart = true } = {}) => {
       return;
     }
     ownedServerProcess = null;
+    verifiedShutdownToken = '';
     if (serverState !== 'stopping' && !allowQuit) {
       const error = `Server process exited unexpectedly (${signal || code}).`;
       console.error(error);
@@ -412,6 +416,7 @@ const startServerInternal = async ({ persistAutoStart = true } = {}) => {
   }
 
   serverLaunchMode = 'started';
+  verifiedShutdownToken = status.shutdownToken;
   await writeStartupLog('server-started', {
     serverStatus: status.server,
     logFile: logPath,
@@ -452,13 +457,21 @@ const stopServerInternal = async ({ persistAutoStart = true } = {}) => {
   }
 
   const serverProcess = ownedServerProcess;
-  const identity = await getServerIdentity();
+  const identity = serverProcess
+    ? null
+    : verifiedShutdownToken
+      ? {
+        kind: 'current',
+        shutdownToken: verifiedShutdownToken,
+      }
+      : await getServerIdentity();
   if (!identity && !serverProcess) {
     if (await isPortInUse()) {
       const error = `Port ${PORT} is in use by an application that is not a verified SnapOverLAN server.`;
       setServerState('error', error);
       throw new Error(error);
     }
+    verifiedShutdownToken = '';
     serverLaunchMode = 'offline';
     setServerState('offline');
     return getServerStatePayload();
@@ -476,23 +489,19 @@ const stopServerInternal = async ({ persistAutoStart = true } = {}) => {
   setServerState('stopping');
   let exited = false;
   let forced = false;
-  if (identity?.shutdownToken) {
-    try {
-      await postServerShutdown(identity.shutdownToken);
-      exited = serverProcess
-        ? await waitForProcessExit(serverProcess, SERVER_STOP_TIMEOUT_MS)
-        : await waitForPortRelease(SERVER_STOP_TIMEOUT_MS);
-    } catch (error) {
-      console.warn('Graceful server shutdown failed:', error);
-    }
-  }
-
-  if (!exited && serverProcess?.connected) {
+  if (serverProcess?.connected) {
     try {
       serverProcess.send({ type: 'snapoverlan:shutdown' });
       exited = await waitForProcessExit(serverProcess, SERVER_STOP_TIMEOUT_MS);
     } catch (error) {
       console.warn('IPC server shutdown failed:', error);
+    }
+  } else if (identity?.shutdownToken) {
+    try {
+      await postServerShutdown(identity.shutdownToken);
+      exited = await waitForPortRelease(SERVER_STOP_TIMEOUT_MS);
+    } catch (error) {
+      console.warn('Graceful server shutdown failed:', error);
     }
   }
 
@@ -514,6 +523,7 @@ const stopServerInternal = async ({ persistAutoStart = true } = {}) => {
     throw new Error(error);
   }
 
+  verifiedShutdownToken = '';
   serverLaunchMode = 'offline';
   setServerState('offline');
   await writeStartupLog('server-stopped', { forced }).catch(() => {});

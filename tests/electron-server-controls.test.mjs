@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { createConnection, createServer } from 'node:net';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -187,6 +187,8 @@ test('one toggle action and concurrent stop calls share one operation', () => {
     rendererSource,
     /desktopServerState !== 'starting'[\s\S]*?desktopServerState !== 'stopping'[\s\S]*?setDesktopServerState\('online'\)/,
   );
+  assert.match(mainSource, /const SERVER_STOP_TIMEOUT_MS = 1000/);
+  assert.match(mainSource, /const identity = serverProcess[\s\S]*?\? null[\s\S]*?: await getServerIdentity\(\)/);
 });
 
 test('header controls are compact, accessible, and preserve existing actions', () => {
@@ -263,6 +265,7 @@ test('verified reused server requires authentication and shuts down gracefully',
   assert.match(duplicateError, /EADDRINUSE|address already in use/i);
 
   const exitPromise = waitForExit(server);
+  const shutdownStartedAt = Date.now();
   const accepted = await fetch(`http://127.0.0.1:${port}/api/server-shutdown`, {
     method: 'POST',
     headers: { 'x-snapoverlan-shutdown-token': control.shutdownToken },
@@ -270,6 +273,9 @@ test('verified reused server requires authentication and shuts down gracefully',
   assert.equal(accepted.status, 202);
   const cleanExit = await exitPromise;
   assert.equal(cleanExit.code, 0);
+  const shutdownElapsedMs = Date.now() - shutdownStartedAt;
+  assert.ok(shutdownElapsedMs < 1200);
+  t.diagnostic(`authenticated reused-server shutdown: ${shutdownElapsedMs} ms`);
 
   await assert.rejects(() => fetch(`http://127.0.0.1:${port}/api/server-status`));
 });
@@ -293,8 +299,47 @@ test('an Electron-owned server stops cleanly over IPC', async (t) => {
 
   await waitForServer(port);
   const exitPromise = waitForExit(server);
+  const shutdownStartedAt = Date.now();
   server.send({ type: 'snapoverlan:shutdown' });
   const cleanExit = await exitPromise;
   assert.equal(cleanExit.code, 0);
+  const shutdownElapsedMs = Date.now() - shutdownStartedAt;
+  assert.ok(shutdownElapsedMs < 1000);
+  t.diagnostic(`owned IPC shutdown: ${shutdownElapsedMs} ms`);
   await assert.rejects(() => fetch(`http://127.0.0.1:${port}/api/server-status`));
+});
+
+test('shutdown cleans up remaining server sockets after a short grace period', async (t) => {
+  const port = await getFreePort();
+  const server = spawn(process.execPath, [serverEntry], {
+    cwd: projectRoot,
+    env: {
+      ...process.env,
+      SNAPOVERLAN_PORT: String(port),
+      SNAPOVERLAN_PARENT_PID: String(process.pid),
+      SNAPOVERLAN_SERVER_SOURCE: 'electron-socket-cleanup-test',
+    },
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    windowsHide: true,
+  });
+  t.after(() => {
+    if (server.exitCode === null) server.kill();
+  });
+
+  await waitForServer(port);
+  const heldSocket = createConnection({ host: '127.0.0.1', port });
+  heldSocket.on('error', () => {});
+  t.after(() => heldSocket.destroy());
+  await new Promise((resolve) => heldSocket.once('connect', resolve));
+  heldSocket.write(`GET /api/server-status HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n`);
+
+  const exitPromise = waitForExit(server);
+  const shutdownStartedAt = Date.now();
+  server.send({ type: 'snapoverlan:shutdown' });
+  const cleanExit = await exitPromise;
+  assert.equal(cleanExit.code, 0);
+  const shutdownElapsedMs = Date.now() - shutdownStartedAt;
+  assert.ok(shutdownElapsedMs < 1400);
+  t.diagnostic(`shutdown with held socket: ${shutdownElapsedMs} ms`);
+  assert.equal(heldSocket.destroyed, true);
 });

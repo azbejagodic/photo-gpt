@@ -217,6 +217,26 @@ test('header controls are compact, accessible, and preserve existing actions', (
   assert.match(rendererStyles, /#backgroundToggleBtn:disabled\s*{\s*cursor:\s*default;/);
 });
 
+test('desktop typography uses the shared system scale without heavy or fractional text', () => {
+  assert.match(
+    rendererStyles,
+    /font-family: "Segoe UI", Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;/,
+  );
+  assert.match(rendererStyles, /-webkit-font-smoothing: antialiased;/);
+  assert.match(rendererStyles, /-moz-osx-font-smoothing: grayscale;/);
+  assert.match(rendererStyles, /text-rendering: optimizeLegibility;/);
+  assert.match(
+    rendererStyles,
+    /button,\s*input,\s*select,\s*textarea\s*\{\s*font: inherit;/,
+  );
+  assert.match(rendererStyles, /body\s*\{[\s\S]*?font-weight: 600;/);
+  assert.match(rendererStyles, /\.header-button\s*\{[\s\S]*?font-weight: 700;/);
+  assert.match(rendererStyles, /\.status-text\s*\{[\s\S]*?font-weight: 700;/);
+  assert.doesNotMatch(rendererStyles, /font-weight:\s*(?!(?:600|700)\b)\d+/);
+  assert.doesNotMatch(rendererStyles, /font-size:\s*[^;]*rem/);
+  assert.doesNotMatch(rendererStyles, /letter-spacing:/);
+});
+
 test('history uses the full pictures workspace and provides a return control', () => {
   assert.match(rendererMarkup, /id="closeBatchesBtn"[^>]*>Back to Pictures<\/button>/);
   assert.match(rendererSource, /setBatchHistoryOpen\(true\)/);

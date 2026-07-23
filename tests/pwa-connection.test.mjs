@@ -6,6 +6,7 @@ import vm from 'node:vm';
 const source = await readFile(new URL('../pwa/app.js', import.meta.url), 'utf8');
 const markup = await readFile(new URL('../pwa/index.html', import.meta.url), 'utf8');
 const styles = await readFile(new URL('../pwa/styles.css', import.meta.url), 'utf8');
+const extensionStyles = await readFile(new URL('../extension/styles.css', import.meta.url), 'utf8');
 
 class FakeElement {
   constructor() {
@@ -53,6 +54,26 @@ function createHarness(fetchImpl = async () => ({ ok: true })) {
   vm.runInContext(source, context, { filename: 'pwa/app.js' });
   return elements;
 }
+
+test('PWA and extension share the normalized system typography', () => {
+  for (const targetStyles of [styles, extensionStyles]) {
+    assert.match(
+      targetStyles,
+      /font-family: "Segoe UI", Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;/,
+    );
+    assert.match(targetStyles, /-webkit-font-smoothing: antialiased;/);
+    assert.match(targetStyles, /-moz-osx-font-smoothing: grayscale;/);
+    assert.match(targetStyles, /text-rendering: optimizeLegibility;/);
+    assert.match(
+      targetStyles,
+      /button,\s*input,\s*select,\s*textarea\s*\{\s*font: inherit;/,
+    );
+    assert.match(targetStyles, /body\s*\{[\s\S]*?font-weight: 600;/);
+    assert.doesNotMatch(targetStyles, /font-weight:\s*(?!(?:600|700)\b)\d+/);
+    assert.doesNotMatch(targetStyles, /font-size:\s*[^;]*rem/);
+    assert.doesNotMatch(targetStyles, /letter-spacing:/);
+  }
+});
 
 test('restored PWA shell has no connection-status UI or styling', () => {
   assert.doesNotMatch(markup, /connectionStatus|connectionMessage|retryConnectionBtn/);

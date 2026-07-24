@@ -12,6 +12,7 @@ const projectRoot = path.resolve(testDir, '..');
 const serverEntry = path.join(projectRoot, 'app', 'server', 'index.js');
 const mainSource = await readFile(path.join(projectRoot, 'app', 'main.js'), 'utf8');
 const serverSource = await readFile(serverEntry, 'utf8');
+const apiSource = await readFile(path.join(projectRoot, 'app', 'server', 'routes', 'api.js'), 'utf8');
 const preloadSource = await readFile(path.join(projectRoot, 'app', 'preload.cjs'), 'utf8');
 const rendererMarkup = await readFile(path.join(projectRoot, 'app', 'renderer', 'index.html'), 'utf8');
 const rendererStyles = await readFile(path.join(projectRoot, 'app', 'renderer', 'styles.css'), 'utf8');
@@ -77,17 +78,22 @@ function waitForExit(child, timeoutMs = 5000) {
   ]);
 }
 
-test('preload exposes only automatic server status, retry, and background methods', () => {
+test('preload exposes only narrow server, background, and auto-copy methods', () => {
   assert.match(mainSource, /preload:\s*preloadPath/);
   assert.match(mainSource, /contextIsolation:\s*true/);
   assert.match(mainSource, /nodeIntegration:\s*false/);
+  assert.match(mainSource, /sandbox:\s*true/);
   assert.match(preloadSource, /getServerState/);
   assert.match(preloadSource, /retryServer/);
   assert.doesNotMatch(preloadSource, /startServer|stopServer|server:start|server:stop/);
   assert.match(preloadSource, /getBackgroundMode/);
   assert.match(preloadSource, /setBackgroundMode/);
+  assert.match(preloadSource, /getAutoCopyFirstPhoto/);
+  assert.match(preloadSource, /setAutoCopyFirstPhoto/);
+  assert.match(preloadSource, /onAutoCopyResult/);
   assert.match(preloadSource, /onDesktopStateChanged/);
   assert.doesNotMatch(preloadSource, /ipcRenderer\.(?:send|sendSync)|require:\s*\(/);
+  assert.doesNotMatch(preloadSource, /clipboard|nativeImage|node:fs|['"]fs['"]/);
 });
 
 test('background mode is limited to an online server', () => {
@@ -199,10 +205,13 @@ test('manual server controls are removed and retry is error-only', () => {
   assert.match(mainSource, /const handleServerControl = async[\s\S]*?return getServerStatePayload\(\)/);
 });
 
-test('settings persist only Background Mode and safely ignore legacy fields', () => {
+test('desktop settings persist Background Mode and auto-copy with safe migration', () => {
   assert.doesNotMatch(mainSource, /serverAutoStart/);
-  assert.match(mainSource, /backgroundMode = settings\.backgroundMode === true/);
-  assert.match(mainSource, /JSON\.stringify\(\{\s*backgroundMode,\s*\}/);
+  assert.match(mainSource, /normalizeDesktopSettings/);
+  assert.match(mainSource, /autoCopyFirstPhoto/);
+  assert.match(mainSource, /JSON\.stringify\(getDesktopSettings\(\)/);
+  assert.match(mainSource, /updateDesktopSetting\(previousSettings, 'backgroundMode'/);
+  assert.match(mainSource, /updateDesktopSetting\(previousSettings, 'autoCopyFirstPhoto'/);
 });
 
 test('disabling Background Mode restores the window without stopping the server', () => {
@@ -218,11 +227,38 @@ test('disabling Background Mode restores the window without stopping the server'
 test('header controls are compact, accessible, and preserve existing actions', () => {
   assert.match(rendererMarkup, /id="connectionPill"/);
   assert.match(rendererMarkup, /id="backgroundToggleBtn"[^>]+aria-label=/);
+  assert.match(rendererMarkup, /id="autoCopyToggleBtn"[^>]+aria-label=[^>]+aria-pressed="false"/);
   assert.match(rendererMarkup, /id="retryServerBtn"/);
   assert.match(rendererMarkup, /id="qrBtn"/);
   assert.match(rendererMarkup, /id="refreshBtn"/);
   assert.match(rendererStyles, /\.header-toggle:focus-visible/);
   assert.match(rendererStyles, /#backgroundToggleBtn:disabled\s*{\s*cursor:\s*default;/);
+});
+
+test('auto-copy uses one validated owned-server IPC path and never gallery refreshes', () => {
+  const selectBatchSource = rendererSource.match(
+    /async function selectBatch[\s\S]*?\n\}/,
+  )?.[0];
+  const loadLatestPicturesSource = rendererSource.match(
+    /async function loadLatestPictures[\s\S]*?\n\}/,
+  )?.[0];
+  assert.ok(selectBatchSource);
+  assert.ok(loadLatestPicturesSource);
+  assert.match(apiSource, /const files = await finalizeUploadedBatch\(req\);[\s\S]*?createUploadCompletedEvent\(req\)/);
+  assert.match(apiSource, /\.find\(\(file\) => \([\s\S]*?file\.mimetype\.startsWith\('image\/'\)/);
+  assert.match(apiSource, /await onUploadCompleted\(completionEvent\)/);
+  assert.match(serverSource, /targetProcess\?\.connected[\s\S]*?typeof targetProcess\.send !== 'function'/);
+  assert.match(mainSource, /ownedServerProcess !== serverProcess/);
+  assert.match(mainSource, /nativeImage\.createFromPath\(filePath\)/);
+  assert.match(mainSource, /clipboard\.writeImage\(image\)/);
+  assert.match(mainSource, /mainWindow\.webContents\.send\('desktop:auto-copy-result'/);
+  assert.match(mainSource, /autoCopyFirstPhoto,/);
+  assert.match(rendererSource, /Auto-copy: \$\{autoCopyFirstPhotoEnabled \? 'On' : 'Off'\}/);
+  assert.match(rendererSource, /aria-pressed', String\(autoCopyFirstPhotoEnabled\)/);
+  assert.match(rendererSource, /Copied \$\{filename\} to clipboard/);
+  assert.doesNotMatch(rendererSource, /copyFirstUploadedImage|nativeImage|clipboard\.writeImage/);
+  assert.doesNotMatch(selectBatchSource, /autoCopy|desktop:auto-copy|setAutoCopyFirstPhoto/);
+  assert.doesNotMatch(loadLatestPicturesSource, /autoCopy|desktop:auto-copy|setAutoCopyFirstPhoto/);
 });
 
 test('desktop typography uses the bundled shared UI font and semantic weights', () => {

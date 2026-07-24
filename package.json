@@ -12,7 +12,7 @@
     "dist": "npm run generate:icons && electron-builder --win",
     "generate:icons": "node scripts/generate-icons.mjs",
     "test:pwa-connection": "node --test tests/pwa-connection.test.mjs",
-    "test:electron-controls": "node --test tests/electron-server-controls.test.mjs"
+    "test:electron-controls": "node --test tests/electron-server-controls.test.mjs tests/auto-copy.test.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

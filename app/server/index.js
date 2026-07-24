@@ -79,6 +79,24 @@ const isLoopbackRequest = (req) => {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
 };
 
+const sendUploadCompletedToParent = (event, targetProcess = process) => {
+  if (!targetProcess?.connected || typeof targetProcess.send !== 'function') {
+    return false;
+  }
+
+  try {
+    targetProcess.send(event, (error) => {
+      if (error) {
+        console.warn('Could not send upload completion event to Electron:', error);
+      }
+    });
+    return true;
+  } catch (error) {
+    console.warn('Could not send upload completion event to Electron:', error);
+    return false;
+  }
+};
+
 app.get('/api/server-control', (req, res) => {
   if (!isLoopbackRequest(req)) {
     res.sendStatus(404);
@@ -107,7 +125,10 @@ app.post('/api/server-shutdown', (req, res) => {
   setImmediate(() => shutdownServer('localhost-control'));
 });
 
-app.use('/api', express.json({ limit: '32kb' }), createApiRouter({ getServerStatus }));
+app.use('/api', express.json({ limit: '32kb' }), createApiRouter({
+  getServerStatus,
+  onUploadCompleted: sendUploadCompletedToParent,
+}));
 app.use('/files', createFilesRouter());
 app.use('/', express.static(PWA_DIR));
 
@@ -237,4 +258,11 @@ if (isDirectRun) {
   });
 }
 
-export { app, HOST, PORT, startServer, stopServer };
+export {
+  app,
+  HOST,
+  PORT,
+  sendUploadCompletedToParent,
+  startServer,
+  stopServer,
+};

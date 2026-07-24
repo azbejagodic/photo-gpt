@@ -2,6 +2,8 @@ const refreshBtn = document.getElementById('refreshBtn');
 const qrBtn = document.getElementById('qrBtn');
 const connectionPill = document.getElementById('connectionPill');
 const backgroundToggleBtn = document.getElementById('backgroundToggleBtn');
+const autoCopyToggleBtn = document.getElementById('autoCopyToggleBtn');
+const autoCopyMessage = document.getElementById('autoCopyMessage');
 const retryServerBtn = document.getElementById('retryServerBtn');
 const serverStatusBadge = document.getElementById('serverStatusBadge');
 const serverStateLabel = document.getElementById('serverStateLabel');
@@ -58,6 +60,7 @@ const AUTO_REFRESH_MS = 5000;
 const MEDIA_REFRESH_TIMEOUT_MS = 10000;
 const UPLOAD_STATUS_REFRESH_MS = 750;
 const UPLOAD_LOADING_TIMEOUT_MS = 60000;
+const AUTO_COPY_MESSAGE_MS = 4000;
 const LIST_PAGE_SIZE = 10;
 const DEFAULT_GRID_LAYOUT = {
   columns: 3,
@@ -106,6 +109,9 @@ let statusLastCheckedAt = null;
 let desktopServerState = 'offline';
 let serverRetryOperation = null;
 let backgroundModeEnabled = false;
+let autoCopyFirstPhotoEnabled = false;
+let autoCopySettingOperation = null;
+let autoCopyMessageTimer = null;
 const launchParams = new URLSearchParams(window.location.search);
 const SERVER_ORIGIN = 'http://localhost:8787';
 
@@ -884,6 +890,18 @@ function renderDesktopControls() {
     );
   }
 
+  if (autoCopyToggleBtn) {
+    autoCopyToggleBtn.textContent = `Auto-copy: ${autoCopyFirstPhotoEnabled ? 'On' : 'Off'}`;
+    autoCopyToggleBtn.disabled = Boolean(autoCopySettingOperation);
+    autoCopyToggleBtn.setAttribute('aria-pressed', String(autoCopyFirstPhotoEnabled));
+    autoCopyToggleBtn.setAttribute(
+      'aria-label',
+      autoCopyFirstPhotoEnabled
+        ? 'Turn automatic copying of the first uploaded photo off'
+        : 'Turn automatic copying of the first uploaded photo on',
+    );
+  }
+
   if (retryServerBtn) {
     retryServerBtn.hidden = desktopServerState !== 'error';
     retryServerBtn.disabled = Boolean(serverRetryOperation);
@@ -904,11 +922,13 @@ async function syncDesktopControls() {
   }
 
   try {
-    const [server, background] = await Promise.all([
+    const [server, background, autoCopy] = await Promise.all([
       window.snapOverLAN.getServerState(),
       window.snapOverLAN.getBackgroundMode(),
+      window.snapOverLAN.getAutoCopyFirstPhoto(),
     ]);
     backgroundModeEnabled = server?.state === 'online' && Boolean(background);
+    autoCopyFirstPhotoEnabled = Boolean(autoCopy);
     setDesktopServerState(server?.state);
     if (server?.state === 'error' && server.error) {
       renderStatus({ state: 'offline', message: server.error });
@@ -916,6 +936,27 @@ async function syncDesktopControls() {
   } catch (error) {
     console.error('Could not read Electron server controls:', error);
   }
+}
+
+function showAutoCopyResult({ success, filename } = {}) {
+  if (!autoCopyMessage || typeof filename !== 'string' || !filename) {
+    return;
+  }
+
+  if (autoCopyMessageTimer !== null) {
+    window.clearTimeout(autoCopyMessageTimer);
+  }
+  autoCopyMessage.textContent = success
+    ? `Copied ${filename} to clipboard`
+    : `Could not automatically copy ${filename}`;
+  autoCopyMessage.classList.toggle('error', !success);
+  autoCopyMessage.hidden = false;
+  autoCopyMessageTimer = window.setTimeout(() => {
+    autoCopyMessage.textContent = '';
+    autoCopyMessage.hidden = true;
+    autoCopyMessage.classList.remove('error');
+    autoCopyMessageTimer = null;
+  }, AUTO_COPY_MESSAGE_MS);
 }
 
 function renderStatus({ state, message } = {}) {
@@ -1907,6 +1948,25 @@ backgroundToggleBtn?.addEventListener('click', async () => {
   }
 });
 
+autoCopyToggleBtn?.addEventListener('click', async () => {
+  if (!window.snapOverLAN || autoCopySettingOperation) {
+    return;
+  }
+
+  autoCopySettingOperation = window.snapOverLAN.setAutoCopyFirstPhoto(
+    !autoCopyFirstPhotoEnabled,
+  );
+  renderDesktopControls();
+  try {
+    autoCopyFirstPhotoEnabled = await autoCopySettingOperation;
+  } catch (error) {
+    console.error('Could not change automatic clipboard copying:', error);
+  } finally {
+    autoCopySettingOperation = null;
+    renderDesktopControls();
+  }
+});
+
 qrBtn.addEventListener('click', openQrModal);
 
 closeQrBtn.addEventListener('click', closeQrModal);
@@ -2031,8 +2091,13 @@ if (window.ResizeObserver) {
 
 refreshDashboard({ source: 'initial' });
 syncDesktopControls();
-window.snapOverLAN?.onDesktopStateChanged?.(({ server, backgroundMode }) => {
+window.snapOverLAN?.onDesktopStateChanged?.(({
+  server,
+  backgroundMode,
+  autoCopyFirstPhoto,
+}) => {
   backgroundModeEnabled = server?.state === 'online' && Boolean(backgroundMode);
+  autoCopyFirstPhotoEnabled = Boolean(autoCopyFirstPhoto);
   setDesktopServerState(server?.state);
   if (server?.state === 'starting') {
     renderStatus({ state: 'checking', message: 'Starting the local server...' });
@@ -2042,5 +2107,6 @@ window.snapOverLAN?.onDesktopStateChanged?.(({ server, backgroundMode }) => {
     renderStatus({ state: 'online', message: 'Server online' });
   }
 });
+window.snapOverLAN?.onAutoCopyResult?.(showAutoCopyResult);
 startUploadStatusRefresh();
 startAutoRefresh();

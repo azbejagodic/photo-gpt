@@ -1,9 +1,11 @@
 import {
   app as electronApp,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
+  nativeImage,
   shell,
   Tray,
 } from 'electron';
@@ -17,6 +19,11 @@ import {
   classifyServerStatus,
   SERVER_CONTROL_ID,
 } from './server/identity.js';
+import { copyFirstUploadedImage } from './auto-copy.js';
+import {
+  normalizeDesktopSettings,
+  updateDesktopSetting,
+} from './desktop-settings.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,8 +55,10 @@ let serverOperation = null;
 let serverOperationType = '';
 let verifiedShutdownToken = '';
 let backgroundMode = false;
+let autoCopyFirstPhoto = false;
 let quitOperation = null;
 let allowQuit = false;
+const ownedServerMessageListeners = new WeakMap();
 
 const delay = (ms) => new Promise((resolve) => {
   setTimeout(resolve, ms);
@@ -151,6 +160,16 @@ const isPortInUse = () => new Promise((resolve) => {
 
 const getStartupLogPath = () => path.join(electronApp.getPath('userData'), 'startup.log');
 const getSettingsPath = () => path.join(electronApp.getPath('userData'), 'desktop-settings.json');
+const getDesktopSettings = () => ({
+  backgroundMode,
+  autoCopyFirstPhoto,
+});
+
+const applyDesktopSettings = (settings) => {
+  const normalized = normalizeDesktopSettings(settings);
+  backgroundMode = normalized.backgroundMode;
+  autoCopyFirstPhoto = normalized.autoCopyFirstPhoto;
+};
 
 const writeStartupLog = async (event, details = {}) => {
   const logPath = getStartupLogPath();
@@ -169,9 +188,9 @@ const writeStartupLog = async (event, details = {}) => {
 
 const loadSettings = async () => {
   try {
-    const settings = JSON.parse(await fs.readFile(getSettingsPath(), 'utf8'));
-    backgroundMode = settings.backgroundMode === true;
+    applyDesktopSettings(JSON.parse(await fs.readFile(getSettingsPath(), 'utf8')));
   } catch (error) {
+    applyDesktopSettings({});
     if (error.code !== 'ENOENT') {
       console.warn('Could not read SnapOverLAN desktop settings:', error);
     }
@@ -181,9 +200,7 @@ const loadSettings = async () => {
 const saveSettings = async () => {
   const settingsPath = getSettingsPath();
   await fs.mkdir(path.dirname(settingsPath), { recursive: true });
-  await fs.writeFile(settingsPath, `${JSON.stringify({
-    backgroundMode,
-  }, null, 2)}\n`, 'utf8');
+  await fs.writeFile(settingsPath, `${JSON.stringify(getDesktopSettings(), null, 2)}\n`, 'utf8');
 };
 
 const getServerStatePayload = () => ({
@@ -197,6 +214,7 @@ const sendDesktopState = () => {
     mainWindow.webContents.send('desktop:state-changed', {
       server: getServerStatePayload(),
       backgroundMode,
+      autoCopyFirstPhoto,
     });
   }
 };
@@ -286,6 +304,69 @@ const waitForPortRelease = async (timeoutMs) => {
   return !(await isPortInUse());
 };
 
+const uploadedFileExists = async (filePath) => {
+  try {
+    return (await fs.stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+};
+
+const sendAutoCopyResult = (result) => {
+  if (
+    !mainWindow
+    || mainWindow.isDestroyed()
+    || !['copied', 'failed'].includes(result?.status)
+    || typeof result.filename !== 'string'
+  ) {
+    return;
+  }
+
+  mainWindow.webContents.send('desktop:auto-copy-result', {
+    success: result.status === 'copied',
+    filename: result.filename,
+  });
+};
+
+const handleOwnedServerMessage = async (serverProcess, message) => {
+  if (ownedServerProcess !== serverProcess) {
+    return;
+  }
+
+  const result = await copyFirstUploadedImage({
+    message,
+    enabled: autoCopyFirstPhoto,
+    fileExists: uploadedFileExists,
+    createImageFromPath: (filePath) => nativeImage.createFromPath(filePath),
+    writeImage: (image) => clipboard.writeImage(image),
+  });
+
+  if (result.status === 'failed') {
+    console.warn(`Could not automatically copy ${result.filename}:`, result.error);
+  }
+  sendAutoCopyResult(result);
+};
+
+const detachOwnedServerMessageListener = (serverProcess) => {
+  const listener = ownedServerMessageListeners.get(serverProcess);
+  if (!listener) {
+    return;
+  }
+  serverProcess.removeListener('message', listener);
+  ownedServerMessageListeners.delete(serverProcess);
+};
+
+const attachOwnedServerMessageListener = (serverProcess) => {
+  detachOwnedServerMessageListener(serverProcess);
+  const listener = (message) => {
+    handleOwnedServerMessage(serverProcess, message).catch((error) => {
+      console.warn('Could not handle upload completion event:', error);
+    });
+  };
+  ownedServerMessageListeners.set(serverProcess, listener);
+  serverProcess.on('message', listener);
+};
+
 const startServerInternal = async () => {
   if (serverState === 'online') {
     return getServerStatePayload();
@@ -300,6 +381,9 @@ const startServerInternal = async () => {
       serverStatus: existingIdentity.server,
       logFile: getStartupLogPath(),
     });
+    if (autoCopyFirstPhoto) {
+      console.warn('Auto-copy is enabled but unavailable while using a reused SnapOverLAN server.');
+    }
     setServerState('online');
     return getServerStatePayload();
   }
@@ -359,8 +443,10 @@ const startServerInternal = async () => {
     windowsHide: true,
   });
   ownedServerProcess = serverProcess;
+  attachOwnedServerMessageListener(serverProcess);
 
   serverProcess.once('error', (error) => {
+    detachOwnedServerMessageListener(serverProcess);
     if (ownedServerProcess === serverProcess) {
       ownedServerProcess = null;
       verifiedShutdownToken = '';
@@ -368,6 +454,7 @@ const startServerInternal = async () => {
     }
   });
   serverProcess.once('exit', (code, signal) => {
+    detachOwnedServerMessageListener(serverProcess);
     if (ownedServerProcess !== serverProcess) {
       return;
     }
@@ -653,11 +740,12 @@ async function setBackgroundMode(enabled) {
   if (backgroundMode === nextValue) {
     return backgroundMode;
   }
-  backgroundMode = nextValue;
+  const previousSettings = getDesktopSettings();
+  applyDesktopSettings(updateDesktopSetting(previousSettings, 'backgroundMode', nextValue));
   try {
     await saveSettings();
   } catch (error) {
-    backgroundMode = !nextValue;
+    applyDesktopSettings(previousSettings);
     throw error;
   }
 
@@ -670,6 +758,28 @@ async function setBackgroundMode(enabled) {
   updateTrayMenu();
   sendDesktopState();
   return backgroundMode;
+}
+
+async function setAutoCopyFirstPhoto(enabled) {
+  const nextValue = Boolean(enabled);
+  if (autoCopyFirstPhoto === nextValue) {
+    return autoCopyFirstPhoto;
+  }
+
+  const previousSettings = getDesktopSettings();
+  applyDesktopSettings(updateDesktopSetting(previousSettings, 'autoCopyFirstPhoto', nextValue));
+  try {
+    await saveSettings();
+  } catch (error) {
+    applyDesktopSettings(previousSettings);
+    throw error;
+  }
+
+  if (autoCopyFirstPhoto && serverLaunchMode === 'reused') {
+    console.warn('Auto-copy is enabled but unavailable while using a reused SnapOverLAN server.');
+  }
+  sendDesktopState();
+  return autoCopyFirstPhoto;
 }
 
 async function requestQuit() {
@@ -709,6 +819,8 @@ ipcMain.handle('server:get-state', () => getServerStatePayload());
 ipcMain.handle('server:retry', () => handleServerControl(() => startServer()));
 ipcMain.handle('background:get', () => backgroundMode);
 ipcMain.handle('background:set', (_event, enabled) => setBackgroundMode(enabled));
+ipcMain.handle('auto-copy:get', () => autoCopyFirstPhoto);
+ipcMain.handle('auto-copy:set', (_event, enabled) => setAutoCopyFirstPhoto(enabled));
 
 const gotLock = electronApp.requestSingleInstanceLock();
 

@@ -481,6 +481,32 @@ h3 {
   color: #9f1d1d;
 }
 
+.auto-copy-message {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 20;
+  max-width: calc(100vw - 32px);
+  margin: 0;
+  padding: 9px 13px;
+  border: 1px solid rgba(220, 252, 255, 0.46);
+  border-radius: 10px;
+  color: var(--ink);
+  background: rgba(218, 252, 244, 0.96);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
+  font-size: 12px;
+  font-weight: var(--font-weight-control);
+  line-height: 1.2;
+  text-align: center;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.auto-copy-message.error {
+  color: #7d2118;
+  background: rgba(255, 226, 219, 0.97);
+}
+
 .batches-panel {
   min-width: 0;
   height: var(--batches-panel-height);

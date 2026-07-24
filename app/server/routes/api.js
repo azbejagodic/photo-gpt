@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { promises as fs } from 'fs';
+import path from 'path';
 import { MAX_FILES, PORT } from '../config.js';
 import { getPhoneUrlRecords } from '../lan.js';
 import {
@@ -150,12 +151,48 @@ const markUploadStarted = (_req, res, next) => {
   next();
 };
 
-const createApiRouter = ({ getServerStatus }) => {
+const createUploadCompletedEvent = (req) => {
+  const firstImage = (req.files || []).find((file) => (
+    typeof file?.mimetype === 'string' && file.mimetype.startsWith('image/')
+  ));
+
+  if (
+    !firstImage
+    || typeof req.uploadBatchId !== 'string'
+    || !req.uploadBatchId
+    || typeof firstImage.filename !== 'string'
+    || !firstImage.filename
+    || typeof firstImage.path !== 'string'
+    || !path.isAbsolute(firstImage.path)
+  ) {
+    return null;
+  }
+
+  return {
+    type: 'snapoverlan:upload-completed',
+    batchId: req.uploadBatchId,
+    firstImage: {
+      name: firstImage.filename,
+      path: firstImage.path,
+      mimeType: firstImage.mimetype,
+    },
+  };
+};
+
+const createApiRouter = ({ getServerStatus, onUploadCompleted = () => {} }) => {
   const router = Router();
 
   router.post('/upload', markUploadStarted, upload.array('photos', MAX_FILES), validateUploadedFiles, uploadErrorHandler, async (req, res, next) => {
     try {
       const files = await finalizeUploadedBatch(req);
+      const completionEvent = createUploadCompletedEvent(req);
+      if (completionEvent) {
+        try {
+          await onUploadCompleted(completionEvent);
+        } catch (error) {
+          console.warn('Could not deliver upload completion event:', error);
+        }
+      }
       res.json({ files });
     } catch (err) {
       next(err);
@@ -281,4 +318,4 @@ const createApiRouter = ({ getServerStatus }) => {
   return router;
 };
 
-export { createApiRouter };
+export { createApiRouter, createUploadCompletedEvent };

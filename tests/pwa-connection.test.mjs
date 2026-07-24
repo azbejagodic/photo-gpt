@@ -7,6 +7,13 @@ const source = await readFile(new URL('../pwa/app.js', import.meta.url), 'utf8')
 const markup = await readFile(new URL('../pwa/index.html', import.meta.url), 'utf8');
 const styles = await readFile(new URL('../pwa/styles.css', import.meta.url), 'utf8');
 const extensionStyles = await readFile(new URL('../extension/styles.css', import.meta.url), 'utf8');
+const electronStyles = await readFile(new URL('../app/renderer/styles.css', import.meta.url), 'utf8');
+const interLicense = await readFile(new URL('../assets/fonts/Inter-OFL.txt', import.meta.url), 'utf8');
+const fontAssets = await Promise.all([
+  readFile(new URL('../app/renderer/fonts/inter-latin-variable.woff2', import.meta.url)),
+  readFile(new URL('../extension/fonts/inter-latin-variable.woff2', import.meta.url)),
+  readFile(new URL('../pwa/fonts/inter-latin-variable.woff2', import.meta.url)),
+]);
 
 class FakeElement {
   constructor() {
@@ -55,24 +62,37 @@ function createHarness(fetchImpl = async () => ({ ok: true })) {
   return elements;
 }
 
-test('PWA and extension share the normalized system typography', () => {
-  for (const targetStyles of [styles, extensionStyles]) {
+test('all runtime interfaces bundle and use the shared Inter typography', () => {
+  for (const targetStyles of [electronStyles, extensionStyles, styles]) {
     assert.match(
       targetStyles,
-      /font-family: "Segoe UI", Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;/,
+      /@font-face\s*\{[\s\S]*?font-family:\s*"SnapOverLAN UI";[\s\S]*?src:\s*url\("\.\/fonts\/inter-latin-variable\.woff2"\)\s*format\("woff2"\);[\s\S]*?font-weight:\s*400 700;[\s\S]*?\}/,
     );
+    assert.match(targetStyles, /--font-ui:\s*"SnapOverLAN UI", system-ui, sans-serif;/);
+    assert.match(targetStyles, /--font-weight-regular:\s*400;/);
+    assert.match(targetStyles, /--font-weight-body:\s*500;/);
+    assert.match(targetStyles, /--font-weight-control:\s*600;/);
+    assert.match(targetStyles, /--font-weight-heading:\s*700;/);
     assert.match(targetStyles, /-webkit-font-smoothing: antialiased;/);
     assert.match(targetStyles, /-moz-osx-font-smoothing: grayscale;/);
-    assert.match(targetStyles, /text-rendering: optimizeLegibility;/);
     assert.match(
       targetStyles,
-      /button,\s*input,\s*select,\s*textarea\s*\{\s*font: inherit;/,
+      /button,\s*input,\s*select,\s*textarea\s*\{[\s\S]*?font-family:\s*inherit;/,
     );
-    assert.match(targetStyles, /body\s*\{[\s\S]*?font-weight: 600;/);
-    assert.doesNotMatch(targetStyles, /font-weight:\s*(?!(?:600|700)\b)\d+/);
+    assert.match(
+      targetStyles,
+      /body\s*\{[\s\S]*?font-family:\s*var\(--font-ui\);[\s\S]*?font-weight:\s*var\(--font-weight-body\);/,
+    );
+    assert.match(targetStyles, /font-synthesis:\s*none;/);
+    assert.doesNotMatch(targetStyles, /font-family:\s*"Segoe UI"/);
+    assert.doesNotMatch(targetStyles, /https?:\/\/[^;)]+\.(?:woff2?|ttf|otf)/i);
     assert.doesNotMatch(targetStyles, /font-size:\s*[^;]*rem/);
     assert.doesNotMatch(targetStyles, /letter-spacing:/);
   }
+
+  assert.ok(fontAssets.every((asset) => asset.length > 0));
+  assert.ok(fontAssets.slice(1).every((asset) => asset.equals(fontAssets[0])));
+  assert.match(interLicense, /SIL OPEN FONT LICENSE Version 1\.1/);
 });
 
 test('restored PWA shell has no connection-status UI or styling', () => {

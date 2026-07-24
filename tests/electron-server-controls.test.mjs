@@ -16,6 +16,14 @@ const preloadSource = await readFile(path.join(projectRoot, 'app', 'preload.cjs'
 const rendererMarkup = await readFile(path.join(projectRoot, 'app', 'renderer', 'index.html'), 'utf8');
 const rendererStyles = await readFile(path.join(projectRoot, 'app', 'renderer', 'styles.css'), 'utf8');
 const rendererSource = await readFile(path.join(projectRoot, 'app', 'renderer', 'app.js'), 'utf8');
+const rendererFont = await readFile(path.join(
+  projectRoot,
+  'app',
+  'renderer',
+  'fonts',
+  'inter-latin-variable.woff2',
+));
+const packageConfig = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8'));
 const requestQuitStart = mainSource.indexOf('async function requestQuit()');
 const requestQuitEnd = mainSource.indexOf("ipcMain.handle('server:get-state'", requestQuitStart);
 const requestQuitSource = mainSource.slice(requestQuitStart, requestQuitEnd);
@@ -217,24 +225,38 @@ test('header controls are compact, accessible, and preserve existing actions', (
   assert.match(rendererStyles, /#backgroundToggleBtn:disabled\s*{\s*cursor:\s*default;/);
 });
 
-test('desktop typography uses the shared system scale without heavy or fractional text', () => {
+test('desktop typography uses the bundled shared UI font and semantic weights', () => {
   assert.match(
     rendererStyles,
-    /font-family: "Segoe UI", Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;/,
+    /@font-face\s*\{[\s\S]*?font-family:\s*"SnapOverLAN UI";[\s\S]*?url\("\.\/fonts\/inter-latin-variable\.woff2"\)[\s\S]*?font-weight:\s*400 700;/,
   );
+  assert.match(rendererStyles, /--font-ui:\s*"SnapOverLAN UI", system-ui, sans-serif;/);
+  assert.match(rendererStyles, /--font-weight-body:\s*500;/);
+  assert.match(rendererStyles, /--font-weight-control:\s*600;/);
+  assert.match(rendererStyles, /--font-weight-heading:\s*700;/);
   assert.match(rendererStyles, /-webkit-font-smoothing: antialiased;/);
   assert.match(rendererStyles, /-moz-osx-font-smoothing: grayscale;/);
-  assert.match(rendererStyles, /text-rendering: optimizeLegibility;/);
   assert.match(
     rendererStyles,
-    /button,\s*input,\s*select,\s*textarea\s*\{\s*font: inherit;/,
+    /button,\s*input,\s*select,\s*textarea\s*\{[\s\S]*?font-family:\s*inherit;/,
   );
-  assert.match(rendererStyles, /body\s*\{[\s\S]*?font-weight: 600;/);
-  assert.match(rendererStyles, /\.header-button\s*\{[\s\S]*?font-weight: 700;/);
-  assert.match(rendererStyles, /\.status-text\s*\{[\s\S]*?font-weight: 700;/);
-  assert.doesNotMatch(rendererStyles, /font-weight:\s*(?!(?:600|700)\b)\d+/);
+  assert.match(
+    rendererStyles,
+    /body\s*\{[\s\S]*?font-family:\s*var\(--font-ui\);[\s\S]*?font-weight:\s*var\(--font-weight-body\);/,
+  );
+  assert.match(
+    rendererStyles,
+    /\.header-button\s*\{[\s\S]*?font-weight:\s*var\(--font-weight-control\);/,
+  );
+  assert.match(
+    rendererStyles,
+    /\.status-text\s*\{[\s\S]*?font-weight:\s*var\(--font-weight-control\);/,
+  );
+  assert.doesNotMatch(rendererStyles, /font-family:\s*"Segoe UI"/);
   assert.doesNotMatch(rendererStyles, /font-size:\s*[^;]*rem/);
   assert.doesNotMatch(rendererStyles, /letter-spacing:/);
+  assert.ok(rendererFont.length > 0);
+  assert.ok(packageConfig.build.files.includes('app/**/*'));
 });
 
 test('history uses the full pictures workspace and provides a return control', () => {
@@ -272,6 +294,16 @@ test('verified reused server requires authentication and shuts down gracefully',
   assert.equal(publicStatus.application, 'SnapOverLAN');
   assert.equal(publicStatus.protocolVersion, 1);
   assert.equal(classifyServerStatus(publicStatus), 'current');
+
+  const fontResponse = await fetch(
+    `http://127.0.0.1:${port}/fonts/inter-latin-variable.woff2`,
+  );
+  assert.equal(fontResponse.status, 200);
+  assert.match(fontResponse.headers.get('content-type') || '', /font\/woff2/i);
+  assert.deepEqual(
+    [...new Uint8Array((await fontResponse.arrayBuffer()).slice(0, 4))],
+    [0x77, 0x4f, 0x46, 0x32],
+  );
 
   const control = await getControl(port);
   assert.equal(control.service, 'snapoverlan-server-control-v1');
